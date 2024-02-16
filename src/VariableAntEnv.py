@@ -42,14 +42,15 @@ class VariableAntEnv(gym.Env):
         *,
         seed: Optional[int] = None,
         options: Optional[dict] = None,
+        reset_hps:bool = True,
     ):
         # sample env parameters
-        grav = np.random.uniform(*self.dynamics_variable_ranges['gravity'])
+        if reset_hps:
+            grav = np.random.uniform(*self.dynamics_variable_ranges['gravity'])
 
-
-        # load env
-        self.env = gym.make('Ant-v3',  *self.env_args, **self.env_kwargs)
-        self.env.sim.model.opt.gravity[2] = grav
+            # load env
+            # self.env = gym.make('Ant-v3',  *self.env_args, **self.env_kwargs)
+            self.env.sim.model.opt.gravity[2] = grav
 
         # return observation
         return self.env.reset()
@@ -66,6 +67,7 @@ class VariableAntEnv(gym.Env):
 
 if __name__ == '__main__':
     env = VariableAntEnv({"gravity": (-5,  -1)}, render_mode='human')
+    print("dt = ", env.env.unwrapped.dt)
     # loop and render to make sure its working
     for _ in range(10_000):
         if _ % 100 == 0:

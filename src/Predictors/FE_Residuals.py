@@ -7,14 +7,15 @@ try:
     from Predictor import Predictor
 except:
     from .Predictor import Predictor
-class NeuralODE(Predictor):
-    def __init__(self, state_size:int, action_size:int, use_actions:bool=True, hidden_size=512):
+class FE_Residuals(Predictor):
+    def __init__(self, state_size:int, action_size:int, use_actions:bool=True, hidden_size=512, n_basis=100):
         super().__init__(state_size, action_size, use_actions)
         self.state_size = state_size
         self.action_size = action_size
         self.use_actions = use_actions
+        self.n_basis = n_basis
         input_size = state_size + (action_size if use_actions else 0)
-        output_size = state_size
+        output_size = state_size * n_basis
         self.model = torch.nn.Sequential(
             torch.nn.Linear(input_size, hidden_size),
             torch.nn.ReLU(),
@@ -26,17 +27,18 @@ class NeuralODE(Predictor):
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_size, output_size)
         )
+        self.average_model = torch.nn.Sequential(
+            torch.nn.Linear(input_size, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, self.state_size)
+        )
 
-    def predict_xdot(self, states, actions):
-        inputs = torch.cat([states, actions], dim=-1) if self.use_actions else states
-        return self.model(inputs)
-
-    def rk4(self, states, actions, dt=0.05):
-        k1 = self.predict_xdot(states, actions)
-        k2 = self.predict_xdot(states + k1 * dt / 2, actions)
-        k3 = self.predict_xdot(states + k2 * dt / 2, actions)
-        k4 = self.predict_xdot(states + k3 * dt, actions)
-        return states + (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
 
     # predicts the next states given states and actions
     def predict(self, states:tensor, actions:tensor, example_states:tensor, example_actions:tensor, example_next_states:tensor, average_function_only=False) -> Tuple[tensor, dict]:
@@ -45,7 +47,27 @@ class NeuralODE(Predictor):
         assert example_states.shape[-1] == self.state_size, "Input size is {}, expected {}".format(example_states.shape[-1], self.state_size)
         assert example_actions.shape[-1] == self.action_size, "Input size is {}, expected {}".format(example_actions.shape[-1], self.action_size)
         assert example_next_states.shape[-1] == self.state_size, "Input size is {}, expected {}".format(example_next_states.shape[-1], self.state_size)
-        return self.rk4(states, actions), {}
+
+        if not average_function_only:
+            # compute average functions
+            with torch.no_grad():
+                example_inputs = torch.cat([example_states, example_actions], dim=-1) if self.use_actions else example_states
+                inputs = torch.cat([states, actions], dim=-1) if self.use_actions else states
+                example_average_function = self.average_model(example_inputs)
+                average_function = self.average_model(inputs)
+            batch_dims = states.shape[:-1]
+            example_batch_dims = example_states.shape[:-1]
+
+            # compute encodings from example data
+            example_individual_encodings = self.model(example_inputs).view(*example_batch_dims, self.n_basis, self.state_size)
+            encodings = torch.einsum("fes,feks->fks", example_next_states - example_average_function, example_individual_encodings) * (1.0/(example_individual_encodings.shape[-3]))
+
+            # approximate next states
+            individual_encodings = self.model(inputs).view(*batch_dims, self.n_basis, self.state_size)
+            return torch.einsum("fks,feks->fes", encodings, individual_encodings) + average_function, {}
+        else:
+            inputs = torch.cat([example_states, example_actions], dim=-1) if self.use_actions else example_states
+            return self.average_model(inputs), {}
 
 
     # given an initial state and a list(tensor) of actions, predicts a full trajectory
@@ -53,26 +75,25 @@ class NeuralODE(Predictor):
         raise Exception("Not implemented")
 
 if __name__ == "__main__":
-    model = NeuralODE(5, 3, True)
+    model = FE_Residuals(5, 3, True)
     states, actions, example_states, example_actions, example_next_states = torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5)
     print(torch.sum(torch.tensor([p.numel() for p in model.parameters()])).item(), "parameters")
     out1 = model.predict(states, actions, example_states, example_actions, example_next_states)
     torch.save(model.state_dict(), "/tmp/model.pt")
     del model
-    model = NeuralODE(5, 3, True)
+    model = FE_Residuals(5, 3, True)
     model.load_state_dict(torch.load("/tmp/model.pt"))
     out2 = model.predict(states, actions, example_states, example_actions, example_next_states)
     assert torch.allclose(out1, out2)
 
 
-    model = NeuralODE(5, 3, False)
+    model = FE_Residuals(5, 3, False)
     states, actions, example_states, example_actions, example_next_states = torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5)
     print(torch.sum(torch.tensor([p.numel() for p in model.parameters()])).item(), "parameters")
     out1 = model.predict(states, actions, example_states, example_actions, example_next_states)
     torch.save(model.state_dict(), "/tmp/model.pt")
     del model
-    model = NeuralODE(5, 3, False)
+    model = FE_Residuals(5, 3, False)
     model.load_state_dict(torch.load("/tmp/model.pt"))
     out2 = model.predict(states, actions, example_states, example_actions, example_next_states)
     assert torch.allclose(out1, out2)
-

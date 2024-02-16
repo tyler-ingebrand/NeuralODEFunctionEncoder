@@ -72,28 +72,30 @@ class VariableCheetahEnv(gym.Env):
         *,
         seed: Optional[int] = None,
         options: Optional[dict] = None,
-    ):
-        # sample env parameters
-        friction = np.random.uniform(self.dynamics_variable_ranges['friction'][0], self.dynamics_variable_ranges['friction'][1])
-        torso_length = np.random.uniform(self.dynamics_variable_ranges['torso_length'][0], self.dynamics_variable_ranges['torso_length'][1])
-        bthigh_length = np.random.uniform(self.dynamics_variable_ranges['bthigh_length'][0], self.dynamics_variable_ranges['bthigh_length'][1])
-        bshin_length = np.random.uniform(self.dynamics_variable_ranges['bshin_length'][0], self.dynamics_variable_ranges['bshin_length'][1])
-        bfoot_length = np.random.uniform(self.dynamics_variable_ranges['bfoot_length'][0], self.dynamics_variable_ranges['bfoot_length'][1])
-        fthigh_length = np.random.uniform(self.dynamics_variable_ranges['fthigh_length'][0], self.dynamics_variable_ranges['fthigh_length'][1])
-        fshin_length = np.random.uniform(self.dynamics_variable_ranges['fshin_length'][0], self.dynamics_variable_ranges['fshin_length'][1])
-        ffoot_length = np.random.uniform(self.dynamics_variable_ranges['ffoot_length'][0], self.dynamics_variable_ranges['ffoot_length'][1])
-        bthigh_gear = np.random.uniform(self.dynamics_variable_ranges['bthigh_gear'][0], self.dynamics_variable_ranges['bthigh_gear'][1])
-        bshin_gear = np.random.uniform(self.dynamics_variable_ranges['bshin_gear'][0], self.dynamics_variable_ranges['bshin_gear'][1])
-        bfoot_gear = np.random.uniform(self.dynamics_variable_ranges['bfoot_gear'][0], self.dynamics_variable_ranges['bfoot_gear'][1])
-        fthigh_gear = np.random.uniform(self.dynamics_variable_ranges['fthigh_gear'][0], self.dynamics_variable_ranges['fthigh_gear'][1])
-        fshin_gear = np.random.uniform(self.dynamics_variable_ranges['fshin_gear'][0], self.dynamics_variable_ranges['fshin_gear'][1])
-        ffoot_gear = np.random.uniform(self.dynamics_variable_ranges['ffoot_gear'][0], self.dynamics_variable_ranges['ffoot_gear'][1])
+        reset_hps: bool = True,
+        ):
+        if reset_hps:
+            # sample env parameters
+            friction = np.random.uniform(self.dynamics_variable_ranges['friction'][0], self.dynamics_variable_ranges['friction'][1])
+            torso_length = np.random.uniform(self.dynamics_variable_ranges['torso_length'][0], self.dynamics_variable_ranges['torso_length'][1])
+            bthigh_length = np.random.uniform(self.dynamics_variable_ranges['bthigh_length'][0], self.dynamics_variable_ranges['bthigh_length'][1])
+            bshin_length = np.random.uniform(self.dynamics_variable_ranges['bshin_length'][0], self.dynamics_variable_ranges['bshin_length'][1])
+            bfoot_length = np.random.uniform(self.dynamics_variable_ranges['bfoot_length'][0], self.dynamics_variable_ranges['bfoot_length'][1])
+            fthigh_length = np.random.uniform(self.dynamics_variable_ranges['fthigh_length'][0], self.dynamics_variable_ranges['fthigh_length'][1])
+            fshin_length = np.random.uniform(self.dynamics_variable_ranges['fshin_length'][0], self.dynamics_variable_ranges['fshin_length'][1])
+            ffoot_length = np.random.uniform(self.dynamics_variable_ranges['ffoot_length'][0], self.dynamics_variable_ranges['ffoot_length'][1])
+            bthigh_gear = np.random.uniform(self.dynamics_variable_ranges['bthigh_gear'][0], self.dynamics_variable_ranges['bthigh_gear'][1])
+            bshin_gear = np.random.uniform(self.dynamics_variable_ranges['bshin_gear'][0], self.dynamics_variable_ranges['bshin_gear'][1])
+            bfoot_gear = np.random.uniform(self.dynamics_variable_ranges['bfoot_gear'][0], self.dynamics_variable_ranges['bfoot_gear'][1])
+            fthigh_gear = np.random.uniform(self.dynamics_variable_ranges['fthigh_gear'][0], self.dynamics_variable_ranges['fthigh_gear'][1])
+            fshin_gear = np.random.uniform(self.dynamics_variable_ranges['fshin_gear'][0], self.dynamics_variable_ranges['fshin_gear'][1])
+            ffoot_gear = np.random.uniform(self.dynamics_variable_ranges['ffoot_gear'][0], self.dynamics_variable_ranges['ffoot_gear'][1])
 
-        # create xml file for these parameters
-        path = self.create_xml_file(friction, torso_length, bthigh_length, bshin_length, bfoot_length, fthigh_length, fshin_length, ffoot_length, bthigh_gear, bshin_gear, bfoot_gear, fthigh_gear, fshin_gear, ffoot_gear)
+            # create xml file for these parameters
+            path = self.create_xml_file(friction, torso_length, bthigh_length, bshin_length, bfoot_length, fthigh_length, fshin_length, ffoot_length, bthigh_gear, bshin_gear, bfoot_gear, fthigh_gear, fshin_gear, ffoot_gear)
 
-        # load env with this xml file
-        self.env = gym.make('HalfCheetah-v3', xml_file=path, *self.env_args, **self.env_kwargs)
+            # load env with this xml file
+            self.env = gym.make('HalfCheetah-v3', xml_file=path, *self.env_args, **self.env_kwargs)
 
         # return observation
         return self.env.reset()
@@ -225,6 +227,7 @@ class VariableCheetahEnv(gym.Env):
 
 if __name__ == '__main__':
     env = VariableCheetahEnv({"torso_length": (0.5, 1.5)}, render_mode='human')
+    print("dt = ", env.env.unwrapped.dt)
     # loop and render to make sure its working
     for _ in range(10_000):
         if _ % 100 == 0:

@@ -1,10 +1,13 @@
 import os
 from itertools import chain
+import matplotlib.cm as cmx
 
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
+from matplotlib import colors, ticker
+from matplotlib.gridspec import GridSpec
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import trange
 from datetime import datetime
@@ -23,7 +26,7 @@ torch.manual_seed(0)
 np.random.seed(0)
 
 # hyper params
-mu_range = [0.1, 2.0]
+mu_range = [1.0, 2.0]
 x_range = [-2.0, 2.0]
 y_range = [-2.0, 2.0]
 t_range = [0, 10]
@@ -42,12 +45,15 @@ approximate_model_mu = 1.0
 train_type = args.train_type
 test_type = args.test_type
 
+train = False # if not train, uses most recent
+video_fit = False
+video_interpolate = False
+image_interpolate = False
+images_flow = True
+
 assert train_type in ["uniform", "trajectory", "trajectory_ls"]
 assert test_type in ["uniform", "trajectory", "trajectory_ls"]
-date_time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-logdir = f"logs/vanderpol/{date_time_str}/{train_type}_{test_type}{'_approx' if use_approximate_model else ''}"
-os.makedirs(logdir, exist_ok=True)
-logger = SummaryWriter(logdir)
+
 
 
 # we use rk4
@@ -71,6 +77,20 @@ def integrate(model, x_0, t_dif, absolute=True):
 
 def get_vanderpol_models(number_models, mu_range, absolute=True):
     mus = torch.rand(number_models, device=device) * (mu_range[1] - mu_range[0]) + mu_range[0]
+    def vanderpol(x):
+        if len(x.shape) == 2:
+            dx = x[:, 1]
+            dy = mus * (1 - x[:, 0]**2) * x[:, 1] - x[:, 0]
+            return torch.concat([dx.unsqueeze(1), dy.unsqueeze(1)], dim=1)
+        else:
+            dx = x[:, :, 1]
+            dy = mus.unsqueeze(1) * (1 - x[:, :, 0]**2) * x[:, :, 1] - x[:, :, 0]
+            return torch.concat([dx.unsqueeze(2), dy.unsqueeze(2)], dim=2)
+
+    return lambda x_0, t_dif: integrate(vanderpol, x_0, t_dif, absolute=absolute), mus
+
+def get_specific_vanderpol_models(number_models, mus, absolute=True):
+    mus = torch.tensor(mus, device=device)
     def vanderpol(x):
         if len(x.shape) == 2:
             dx = x[:, 1]
@@ -203,39 +223,61 @@ def predict(basis_functions, encodings, xs, t_difs):
 
 # create a neural ode function encoder
 basis_functions = [torch.nn.Sequential(
-            torch.nn.Linear(input_size, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, output_size),
-        ).to(device) for k in range(embed_size)]
-optimizer = torch.optim.Adam(chain(*[m.parameters() for m in basis_functions]), lr=1e-3)
+                torch.nn.Linear(input_size, hidden_size),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_size, hidden_size),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_size, output_size),
+            ).to(device) for k in range(embed_size)]
+if train:
+    # add learning rate decay
+    decay_rate = 0.999
+    optimizer = torch.optim.Adam(chain(*[m.parameters() for m in basis_functions]), lr=1e-3)
+    my_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=decay_rate)
 
-losses = []
-for step in trange(descent_steps):
-    # gather data
-    vanderpol_models, mus = get_vanderpol_models(num_functions, mu_range)
-    init_states = (torch.rand(num_functions, 2) * (x_range[1] - x_range[0]) + x_range[0]).to(device)
-    xs, ts = gather_trajectories(vanderpol_models, mus, init_states)
+    date_time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    logdir = f"logs/vanderpol/{date_time_str}/{train_type}_{test_type}{'_approx' if use_approximate_model else ''}"
+    os.makedirs(logdir, exist_ok=True)
+    logger = SummaryWriter(logdir)
 
-    # compute coefficients
-    encodings = get_encodings(basis_functions, vanderpol_models, mus, type=train_type)
+    losses = []
+    for step in trange(descent_steps):
+        # gather data
+        vanderpol_models, mus = get_vanderpol_models(num_functions, mu_range)
+        init_states = (torch.rand(num_functions, 2) * (x_range[1] - x_range[0]) + x_range[0]).to(device)
+        xs, ts = gather_trajectories(vanderpol_models, mus, init_states)
 
-    # compute loss
-    t_difs = ts[1:] - ts[:-1]
-    y_hat = predict(basis_functions, encodings, xs[:, :-1, :], t_difs)
-    loss = torch.nn.MSELoss()(y_hat, xs[:, 1:, :])
+        # compute coefficients
+        encodings = get_encodings(basis_functions, vanderpol_models, mus, type=train_type)
 
-    # backprop
-    optimizer.zero_grad()
-    loss.backward()
-    norm = torch.nn.utils.clip_grad_norm_(chain(*[m.parameters() for m in basis_functions]), 1)
-    optimizer.step()
-    losses.append(loss.item())
+        # compute loss
+        t_difs = ts[1:] - ts[:-1]
+        y_hat = predict(basis_functions, encodings, xs[:, :-1, :], t_difs)
+        loss = torch.nn.MSELoss()(y_hat, xs[:, 1:, :])
 
-    # logs
-    logger.add_scalar("loss", loss.item(), step)
-    logger.add_scalar("grad_norm", norm, step)
+        # backprop
+        optimizer.zero_grad()
+        loss.backward()
+        norm = torch.nn.utils.clip_grad_norm_(chain(*[m.parameters() for m in basis_functions]), 1)
+        optimizer.step()
+        losses.append(loss.item())
+
+        # logs
+        logger.add_scalar("loss", loss.item(), step)
+        logger.add_scalar("grad_norm", norm, step)
+
+        my_lr_scheduler.step()
+
+    for basis_index in range(len(basis_functions)):
+        torch.save(basis_functions[basis_index].state_dict(), f"{logdir}/basis_{basis_index}.pt")
+else: # load model
+    # get latest directory in logs/vanderpol
+    dirs = os.listdir("logs/vanderpol")
+    newest = max(dirs, key=lambda x: os.path.getctime(f"logs/vanderpol/{x}"))
+    logdir = f"logs/vanderpol/{newest}/{train_type}_{test_type}{'_approx' if use_approximate_model else ''}"
+    for i in range(embed_size):
+        basis_functions[i].load_state_dict(torch.load(f"{logdir}/basis_{i}.pt"))
+
 
 
 ################################################################################################################################################
@@ -243,55 +285,302 @@ for step in trange(descent_steps):
 ################################################################################################################################################
 # plot
 # creates 9 models for 1000 time steps
-vanderpol_models, mus = get_vanderpol_models(9, mu_range)
-xs = torch.zeros(9, 1000, 2, device=device)
-xs_estimated = torch.zeros(9, 1000, 2, device=device)
-xs[:, 0, :] = torch.rand(9, 2, device=device) * (x_range[1] - x_range[0]) + x_range[0]
-xs_estimated[:, 0, :] = xs[:, 0, :]
+if video_fit:
+    vanderpol_models, mus = get_vanderpol_models(9, mu_range)
+    xs = torch.zeros(9, 1000, 2, device=device)
+    xs_estimated = torch.zeros(9, 1000, 2, device=device)
+    xs[:, 0, :] = torch.rand(9, 2, device=device) * (x_range[1] - x_range[0]) + x_range[0]
+    xs_estimated[:, 0, :] = xs[:, 0, :]
 
-# get encoding
-encodings = get_encodings(basis_functions, vanderpol_models, mus,  type=test_type)
+    # get encoding
+    encodings = get_encodings(basis_functions, vanderpol_models, mus,  type=test_type)
 
 
-# create video
-width, height = 1000, 1000
-out = cv2.VideoWriter(f'{logdir}/output.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
-fig, axs = plt.subplots(3, 3)
-fig.set_size_inches(width / 100, height / 100)
-fig.set_dpi(100)
-fig.tight_layout()
-for i in range(9):
-    axs[i // 3, i % 3].set_title(f"mu={mus[i]:.2f}")
-    axs[i//3, i%3].set_xlim(-5, 5)
-    axs[i//3, i%3].set_ylim(-5, 5)
-
-# run ploter
-for time_index in trange(plot_time-1):
-    # run the vanderpol model
-    x_now = xs[:, time_index, :]
-    t_dif = torch.tensor(0.1).to(device)
-    x_next = vanderpol_models(x_now, t_dif)
-    xs[:, time_index+1, :] = x_next
-
-    # run the fe model
-    x_now = xs_estimated[:, time_index:time_index+1, :]
-    x_next = predict(basis_functions, encodings, x_now, t_dif)
-    xs_estimated[:, time_index+1, :] = x_next.squeeze(1)
-
-    # plot the new point
+    # create video
+    width, height = 1000, 1000
+    out = cv2.VideoWriter(f'{logdir}/output.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
+    fig, axs = plt.subplots(3, 3)
+    fig.set_size_inches(width / 100, height / 100)
+    fig.set_dpi(100)
+    fig.tight_layout()
     for i in range(9):
-        axs[i//3, i%3].plot([xs[i, time_index,  0].cpu().detach().numpy(), xs[i,time_index+1, 0].cpu().detach().numpy()],
-                            [xs[i, time_index,  1].cpu().detach().numpy(), xs[i,time_index+1, 1].cpu().detach().numpy()],
-                            color="black")
-        axs[i//3, i%3].plot([xs_estimated[i, time_index,  0].cpu().detach().numpy(), xs_estimated[i,time_index+1, 0].cpu().detach().numpy()],
-                            [xs_estimated[i, time_index,  1].cpu().detach().numpy(), xs_estimated[i,time_index+1, 1].cpu().detach().numpy()],
-                            color="red", marker="o", markersize=2)
+        axs[i // 3, i % 3].set_title(f"mu={mus[i]:.2f}")
+        axs[i//3, i%3].set_xlim(-5, 5)
+        axs[i//3, i%3].set_ylim(-5, 5)
+
+    # run ploter
+    for time_index in trange(plot_time-1):
+        # run the vanderpol model
+        x_now = xs[:, time_index, :]
+        t_dif = torch.tensor(0.1).to(device)
+        x_next = vanderpol_models(x_now, t_dif)
+        xs[:, time_index+1, :] = x_next
+
+        # run the fe model
+        x_now = xs_estimated[:, time_index:time_index+1, :]
+        x_next = predict(basis_functions, encodings, x_now, t_dif)
+        xs_estimated[:, time_index+1, :] = x_next.squeeze(1)
+
+        # plot the new point
+        for i in range(9):
+            axs[i//3, i%3].plot([xs[i, time_index,  0].cpu().detach().numpy(), xs[i,time_index+1, 0].cpu().detach().numpy()],
+                                [xs[i, time_index,  1].cpu().detach().numpy(), xs[i,time_index+1, 1].cpu().detach().numpy()],
+                                color="black")
+            axs[i//3, i%3].plot([xs_estimated[i, time_index,  0].cpu().detach().numpy(), xs_estimated[i,time_index+1, 0].cpu().detach().numpy()],
+                                [xs_estimated[i, time_index,  1].cpu().detach().numpy(), xs_estimated[i,time_index+1, 1].cpu().detach().numpy()],
+                                color="red", marker="o", markersize=2)
 
 
-    # Convert graph to numpy image
-    fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
-    img = cv2.cvtColor(data, cv2.COLOR_RGBA2BGR)
-    out.write(img)
-out.release()
+        # Convert graph to numpy image
+        fig.canvas.draw()
+        data = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+        data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        img = cv2.cvtColor(data, cv2.COLOR_RGBA2BGR)
+        out.write(img)
+    out.release()
+
+if video_interpolate:
+    # now compute the representations for vanderpol models of 0.5, 2.0, and show the linear combinations of their representations
+    # creates 2 models
+    vanderpol_model1, mu1 = get_vanderpol_models(1, [1.0, 1.0])
+    vanderpol_model2, mu2 = get_vanderpol_models(1, [2.0, 2.0])
+
+
+    # get encoding
+    encoding1 = get_encodings(basis_functions, vanderpol_model1, mu1,  type=test_type)
+    encoding2 = get_encodings(basis_functions, vanderpol_model2, mu2,  type=test_type)
+
+    # create all 9 encodings
+    encodings = []
+    mus = []
+    # instead of theta going from 0 to 1, make theta go from -1 to 2
+    for i in range(9):
+        theta =  1 - (i / 4)
+        encodings.append(encoding1 * (theta) + encoding2 * (1 - theta))
+        mus.append((mu1 * (theta) + mu2 * (1 - theta)).item())
+    encodings = torch.stack(encodings, dim=0).squeeze(1)
+
+    # now create all 9 mus
+    vanderpol_models, mus = get_specific_vanderpol_models(9, mus, absolute=True)
+
+    # Now plot everything
+    xs_estimated = torch.zeros(9, 1000, 2, device=device)
+    xs_estimated[:, 0, :] = xs[:, 0, :]
+
+
+    # create video
+    width, height = 1000, 1000
+    out = cv2.VideoWriter(f'{logdir}/output_interpolate.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
+    fig, axs = plt.subplots(3, 3)
+    fig.set_size_inches(width / 100, height / 100)
+    fig.set_dpi(100)
+    fig.tight_layout()
+    for i in range(9):
+        approx_mu =  1 + i/4
+        title = f"Approximation of mu={approx_mu}"
+        axs[i // 3, i % 3].set_title(title)
+        axs[i//3, i%3].set_xlim(-5, 5)
+        axs[i//3, i%3].set_ylim(-5, 5)
+
+    # run ploter
+    for time_index in trange(plot_time-1):
+        # run the vanderpol model
+        x_now = xs[:, time_index, :]
+        t_dif = torch.tensor(0.1).to(device)
+        x_next = vanderpol_models(x_now, t_dif)
+        xs[:, time_index+1, :] = x_next
+
+        # run the fe model
+        x_now = xs_estimated[:, time_index:time_index+1, :]
+        x_next = predict(basis_functions, encodings, x_now, t_dif)
+        xs_estimated[:, time_index+1, :] = x_next.squeeze(1)
+
+        # plot the new point
+        for i in range(9):
+            axs[i // 3, i % 3].plot(
+                [xs[i, time_index, 0].cpu().detach().numpy(), xs[i, time_index + 1, 0].cpu().detach().numpy()],
+                [xs[i, time_index, 1].cpu().detach().numpy(), xs[i, time_index + 1, 1].cpu().detach().numpy()],
+                color="black")
+            axs[i//3, i%3].plot([xs_estimated[i, time_index,  0].cpu().detach().numpy(), xs_estimated[i,time_index+1, 0].cpu().detach().numpy()],
+                                [xs_estimated[i, time_index,  1].cpu().detach().numpy(), xs_estimated[i,time_index+1, 1].cpu().detach().numpy()],
+                                color="red", marker="o", markersize=2)
+
+
+        # Convert graph to numpy image
+        fig.canvas.draw()
+        data = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+        data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        img = cv2.cvtColor(data, cv2.COLOR_RGBA2BGR)
+        out.write(img)
+    out.release()
+    plt.clf()
+
+# create single rendering of different values of mu vs the interpolated estimate
+# create a 1 row, 2 column matplotlib plot with the second column as a color bar and tiny
+if image_interpolate:
+    fig = plt.figure(figsize=(2.1*3, 1 * 3))
+    gs = GridSpec(1, 3, width_ratios=[1, 1, 0.1])
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[0, 1])
+
+    # create a color bar
+    cmap_type = 'viridis'
+    jet = plt.get_cmap(cmap_type)
+    cNorm = colors.Normalize(vmin=1, vmax=3)
+    scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=jet)
+
+    # make last plot the colorbar
+    cax = fig.add_subplot(gs[0, 2])
+    cb = fig.colorbar(scalarMap, cax=cax)
+
+    # create ground truth vanderpol systems
+    mus = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0]
+    vanderpol_models, mus = get_specific_vanderpol_models(9, mus, absolute=True)
+
+    # create space to store the ground truth and the estimate
+    horizon = 10_000 # long enough to reach steady state
+    xs = torch.zeros(len(mus), horizon, 2, device=device)
+    xs_estimated = torch.zeros(len(mus), horizon, 2, device=device)
+    xs[:, 0, :] = torch.rand(len(mus), 2, device=device) * (x_range[1] - x_range[0]) + x_range[0]
+    xs_estimated[:, 0, :] = xs[:, 0, :]
+
+    # estimate ground truth
+    for time_index in trange(horizon-1):
+        x_now = xs[:, time_index, :]
+        t_dif = torch.tensor(0.1).to(device)
+        x_next = vanderpol_models(x_now, t_dif)
+        xs[:, time_index+1, :] = x_next
+
+    # get representaiton for mu = 1.0 and mu = 2.0
+    vanderpol_model1, mu1 = get_vanderpol_models(1, [1.0, 1.0])
+    vanderpol_model2, mu2 = get_vanderpol_models(1, [2.0, 2.0])
+
+    # get encoding
+    encoding1 = get_encodings(basis_functions, vanderpol_model1, mu1,  type=test_type)
+    encoding2 = get_encodings(basis_functions, vanderpol_model2, mu2,  type=test_type)
+
+    # create all 9 encodings
+    encodings = []
+    mus2 = []
+    # instead of theta going from 0 to 1, make theta go from -1 to 2
+    for i in range(9):
+        theta =  1 - (i / 4)
+        encodings.append(encoding1 * (theta) + encoding2 * (1 - theta))
+        mus2.append((mu1 * (theta) + mu2 * (1 - theta)).item())
+    encodings = torch.stack(encodings, dim=0).squeeze(1)
+    print(mus2, mus)
+
+    # now simulate all encodings
+    for time_index in trange(horizon-1):
+        # run the fe model
+        x_now = xs_estimated[:, time_index:time_index+1, :]
+        x_next = predict(basis_functions, encodings, x_now, t_dif)
+        xs_estimated[:, time_index+1, :] = x_next.squeeze(1)
+
+
+    # plot the ground truth in the first ax. Only care about the last 1000 points
+    for i in range(len(mus)):
+        color = scalarMap.to_rgba(mus2[i])
+        ax1.plot(xs[i, -1000:, 0].cpu().detach().numpy(), xs[i, -1000:, 1].cpu().detach().numpy(), color=color)
+
+    # plot the estimate in the second ax. Only care about the last 1000 points
+    for i in range(len(mus)):
+        color = scalarMap.to_rgba(mus2[i])
+        ax2.plot(xs_estimated[i, -1000:, 0].cpu().detach().numpy(), xs_estimated[i, -1000:, 1].cpu().detach().numpy(), color=color)
+
+
+    # set labels, titles
+    ax1.set_title("Ground Truth")
+    ax2.set_title("Estimated")
+
+    # set xlims
+    ax1.set_xlim(-2.3, 2.3)
+    ax2.set_xlim(-2.3, 2.3)
+    ax1.set_ylim(-5, 5)
+    ax2.set_ylim(-5, 5)
+
+    # set colorbar labels
+    cb.locator = ticker.LinearLocator(9) # ticker.MaxNLocator(nbins=3)
+    cb.update_ticks()
+    tick_labels = [f"{i:.2f}{'*' if i == 1.0 or i == 2.0 else ''}" for i in mus2]
+    cb.ax.set_yticklabels(tick_labels)
+
+    # save it to image
+    plt.savefig(f"{logdir}/ground_truth_vs_estimate.png")
+
+if images_flow:
+    # define the model
+    def model_x_dot(x, encodings):
+        basis_delta_xs = torch.concat([basis_functions[i](x).unsqueeze(1) for i in range(len(basis_functions))], dim=1)
+        return torch.einsum("fkdx,fkx->fdx", basis_delta_xs, encodings)
+
+    # define a bunch of mus and interpolated encodings
+    vanderpol_model1, mu1 = get_vanderpol_models(1, [1.0, 1.0])
+    vanderpol_model2, mu2 = get_vanderpol_models(1, [2.0, 2.0])
+
+    # get encoding
+    encoding1 = get_encodings(basis_functions, vanderpol_model1, mu1, type=test_type)
+    encoding2 = get_encodings(basis_functions, vanderpol_model2, mu2, type=test_type)
+
+    # create all 9 encodings
+    encodings = []
+    mus2 = []
+    # instead of theta going from 0 to 1, make theta go from -1 to 2
+    for i in range(9):
+        theta = 1 - (i / 4)
+        encodings.append(encoding1 * (theta) + encoding2 * (1 - theta))
+        mus2.append((mu1 * (theta) + mu2 * (1 - theta)).item())
+    encodings = [encodings[0], encodings[2], encodings[4], encodings[8]]
+    mus = [mus2[0], mus2[2], mus2[4], mus2[8]]
+
+    for encoding, mu in zip(encodings, mus):
+        # Plot a streamplot of the vector vield of a van der Pol oscillator
+        fig = plt.figure(figsize=(8, 8))
+        ax = fig.add_subplot(111)
+
+        xmin = -3
+        xmax = 3
+        ymin = -5
+        ymax = 5
+        density = 100
+
+        # generate input data
+        XX, YY = np.meshgrid(np.linspace(xmin, xmax, density), np.linspace(ymin, ymax, density))
+        XX_tensor = torch.tensor(XX, device=device).float().flatten()
+        YY_tensor = torch.tensor(YY, device=device).float().flatten()
+
+        # get encodings for a given mu
+        vanderpol_model, mu = get_vanderpol_models(1, [mu, mu])
+
+        # compute the vector field
+        inputs = torch.cat([XX_tensor.unsqueeze(1), YY_tensor.unsqueeze(1)], dim=1).unsqueeze(0)
+        x_dots = model_x_dot(inputs, encoding).reshape(density, density, 2)
+        U = x_dots[:, :, 0].cpu().detach().numpy()
+        V = x_dots[:, :, 1].cpu().detach().numpy()
+
+        # plot the stream
+        ax.streamplot(XX, YY, U, V, color="k", linewidth=0.5, density=1.0, broken_streamlines=False)
+
+        # simulate a single trajectory using the encodings and plot it
+        x_range = [-4.0, 4.0]
+        x = torch.rand(1, 1, 2, device=device) * (x_range[1] - x_range[0]) + x_range[0]
+        xs = [x.squeeze(0).squeeze(0)]
+        t_dif = torch.tensor(0.05).to(device)
+        for _ in range(1000):
+            x = predict(basis_functions, encoding, x, t_dif)
+            xs.append(x.squeeze(0).squeeze(0))
+
+        xs = torch.stack(xs, dim=0).squeeze(1).cpu().detach().numpy()
+        ax.plot(xs[:, 0], xs[:, 1], color="blue", linewidth=3)
+
+
+        # do lims
+        ax.set_xlim(xmin=xmin, xmax=xmax)
+        ax.set_ylim(ymin=ymin, ymax=ymax)
+
+        # remove tick labels
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+        plt.savefig(f"{logdir}/vector_field_mu_{mu.item():.2f}.pdf")
+        # plt.show()
