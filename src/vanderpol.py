@@ -559,7 +559,7 @@ if images_flow:
         V = x_dots[:, :, 1].cpu().detach().numpy()
 
         # plot the stream
-        ax.streamplot(XX, YY, U, V, color="k", linewidth=0.5, density=1.0, broken_streamlines=False)
+        ax.streamplot(XX, YY, U, V, color='0.5', linewidth=0.5, density=1.0, broken_streamlines=False)
 
         # simulate a single trajectory using the encodings and plot it
         x_range = [-4.0, 4.0]
@@ -582,5 +582,12 @@ if images_flow:
         ax.set_xticklabels([])
         ax.set_yticklabels([])
 
-        plt.savefig(f"{logdir}/vector_field_mu_{mu.item():.2f}.pdf")
+        # reformat
+        plt.tight_layout()
+        ax.tick_params(axis=u'both', which=u'both', length=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+
+        plt.savefig(f"{logdir}/vector_field_mu_{mu.item():.2f}.pdf", bbox_inches="tight", pad_inches=0.0)
         # plt.show()
