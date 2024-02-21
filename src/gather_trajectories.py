@@ -9,7 +9,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from tqdm import trange
 
 # loads the data from the newest directory in logs/ant/policy or logs/cheetah/policy. Or, if load_dir is specified, from there
-def load_data(env:str, policy_type:str, load_dir:Union[str, None]=None, normalize=True):
+def load_data(env:str, policy_type:str, load_dir:Union[str, None]=None, normalize=True, get_groundtruth_hidden_params=False, get_normalize_params = False):
     if not load_dir:
         load_dir = f"logs/{'ant' if env == 'Ant-v3' else 'cheetah'}/policy"
         # list all subdirs, get the newest one
@@ -31,10 +31,11 @@ def load_data(env:str, policy_type:str, load_dir:Union[str, None]=None, normaliz
 
     # if ant, remove contact forces
     if env == "Ant-v3":
-        train_states = train_states[:, :, :27]
-        train_next_states = train_next_states[:, :, :27]
-        test_states = test_states[:, :, :27]
-        test_next_states = test_next_states[:, :, :27]
+        raise Exception("Should be 27 if not using x dim, 28 else")
+        train_states = train_states[:, :, :28]
+        train_next_states = train_next_states[:, :, :28]
+        test_states = test_states[:, :, :28]
+        test_next_states = test_next_states[:, :, :28]
 
     # normalize
     if normalize:
@@ -44,12 +45,19 @@ def load_data(env:str, policy_type:str, load_dir:Union[str, None]=None, normaliz
         train_next_states = (train_next_states - mean) / std
         test_next_states = (test_next_states - mean) / std
 
-    return train_states, train_actions, train_next_states, test_states, test_actions, test_next_states
+    if get_groundtruth_hidden_params:
+        train_hidden_params = torch.load(os.path.join(load_dir, "train_hidden_params.pt"))
+        test_hidden_params = torch.load(os.path.join(load_dir, "test_hidden_params.pt"))
+        return train_states, train_actions, train_next_states, test_states, test_actions, test_next_states, train_hidden_params, test_hidden_params
+    elif get_normalize_params:
+        return train_states, train_actions, train_next_states, test_states, test_actions, test_next_states, mean, std
+    else:
+        return train_states, train_actions, train_next_states, test_states, test_actions, test_next_states
 
 
 def visualize(train_env, args):
     terminated = False
-    for timestep in range(args.num_timesteps):
+    for timestep in range(10000):
         if terminated or timestep % 1000 == 0:
             obs, info = train_env.reset()
         action = train_env.action_space.sample()
@@ -60,11 +68,13 @@ def gather_data_with_hidden_params(env, model, n_envs, episode_length, n_episode
     states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
     actions = torch.zeros((n_envs, n_episodes, episode_length, env.action_space.shape[0]))
     next_states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
+    hidden_params = []
     transitions_per_env = n_episodes * episode_length
 
     # gather data
     for env_index in trange(n_envs):
         obs, info = env.reset()  # resets hidden params to something new
+        hidden_params.append(info["dynamics"])
         for step_index in range(transitions_per_env):
             # reset every so many steps
             if step_index % episode_length == 0:
@@ -86,8 +96,8 @@ def gather_data_with_hidden_params(env, model, n_envs, episode_length, n_episode
 
             # go next
             obs = nobs
-
-    return states, actions, next_states
+    assert len(hidden_params) == n_envs
+    return states, actions, next_states, hidden_params
 
 # note the inputs (states, actions) do not depend on any hidden parameters
 # they are sampled from the default environment
@@ -98,7 +108,7 @@ def gather_data_without_hidden_params(env, model, n_envs, episode_length, n_epis
     states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
     actions = torch.zeros((n_envs, n_episodes, episode_length, env.action_space.shape[0]))
     next_states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
-
+    hidden_params = []
     transitions_per_env = n_episodes * episode_length
 
     if data_type == "precise":
@@ -125,7 +135,9 @@ def gather_data_without_hidden_params(env, model, n_envs, episode_length, n_epis
 
         # then do this transition for every hidden parameter, so the initial conditions are exactly the same
         for env_index in trange(n_envs):
-            _ = env.reset()  # samples a hidden param
+            _, info = env.reset()  # samples a hidden param
+            hidden_params.append(info["dynamics"])
+
             for step_index in range(transitions_per_env):
                 # get initial conditions
                 env.env.sim.set_state_from_flattened(mujoco_states[step_index].numpy())
@@ -164,7 +176,8 @@ def gather_data_without_hidden_params(env, model, n_envs, episode_length, n_epis
 
         # then do this transition for every hidden parameter, so the initial conditions are exactly the same
         for env_index in trange(n_envs):
-            _ = env.reset()
+            _, info = env.reset()
+            hidden_params.append(info["dynamics"])
             for step_index in range(transitions_per_env):
                 # get initial conditions
                 mujoco_state = mujoco_states[env_index * transitions_per_env + step_index]
@@ -181,7 +194,8 @@ def gather_data_without_hidden_params(env, model, n_envs, episode_length, n_epis
                 next_states[env_index, step_index // episode_length, step_index % episode_length] = torch.tensor(nobs)
     else:
         raise Exception("Invalid data type")
-    return states, actions, next_states
+    assert len(hidden_params) == n_envs
+    return states, actions, next_states, hidden_params
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
@@ -192,10 +206,12 @@ if __name__ == '__main__':
     argparser.add_argument('--alg', help='RL algorithm', default='sac')
     argparser.add_argument('--data_type', help='The method to use to gather data', default='random')
     argparser.add_argument('--visualize', help='Visualize the policy, does not save data', action='store_true')
+    argparser.add_argument('--xdim', help='To include x dim', action='store_false')
     args = argparser.parse_args()
     assert args.env is not None and args.env in ['Ant-v3', 'HalfCheetah-v3']
     assert args.alg is not None and args.alg in ['ppo', 'sac']
     assert args.data_type is not None and args.data_type in ['random', 'on-policy', "precise", "precise2"]
+    use_x_dim = args.xdim
 
     # set random seed
     torch.manual_seed(args.seed)
@@ -206,9 +222,9 @@ if __name__ == '__main__':
     # create env
     if args.env == 'Ant-v3':
         from VariableAntEnv import VariableAntEnv
-        train_env = VariableAntEnv({"gravity":(-9.8, -4.0)}, render_mode=render_mode, terminate_when_unhealthy=False)
-        test_env1 = VariableAntEnv({"gravity":(-4.0, -0.5)}, render_mode=render_mode, terminate_when_unhealthy=False)
-        test_env2 = VariableAntEnv({"gravity":(-13.8, -9.8)}, render_mode=render_mode, terminate_when_unhealthy=False)
+        train_env = VariableAntEnv({"gravity":(-9.8, -4.0)}, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
+        test_env1 = VariableAntEnv({"gravity":(-4.0, -0.5)}, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
+        test_env2 = VariableAntEnv({"gravity":(-13.8, -9.8)}, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
 
     else:
         from VariableCheetahEnv import VariableCheetahEnv
@@ -232,9 +248,9 @@ if __name__ == '__main__':
         # train_env = VariableCheetahEnv({"torso_length":(0.75, 1.25)}, render_mode=render_mode)
         # test_env1 = VariableCheetahEnv({"torso_length":(1.25, 1.5)}, render_mode=render_mode)
         # test_env2 = VariableCheetahEnv({"torso_length":(0.5, 0.75)}, render_mode=render_mode)
-        train_env = VariableCheetahEnv(vars, render_mode=render_mode)
-        test_env1 = VariableCheetahEnv(vars, render_mode=render_mode)
-        test_env2 = VariableCheetahEnv(vars, render_mode=render_mode)
+        train_env = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
+        test_env1 = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
+        test_env2 = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
 
     # load trained policy
     load_dir = f"logs/{'ant' if args.env == 'Ant-v3' else 'cheetah'}/policy"
@@ -260,13 +276,13 @@ if __name__ == '__main__':
         visualize(train_env, args)
         exit()
     elif args.data_type == "random" or args.data_type == "on-policy":
-        train_states, train_actions, train_next_states = gather_data_with_hidden_params(train_env, model, n_envs, episode_length, n_episodes, data_type)
-        test_states1, test_actions1, test_next_states1 = gather_data_with_hidden_params(test_env1, model, test_envs, episode_length, n_episodes, data_type)
-        test_states2, test_actions2, test_next_states2 = gather_data_with_hidden_params(test_env2, model, test_envs, episode_length, n_episodes, data_type)
+        train_states, train_actions, train_next_states, train_hidden_params = gather_data_with_hidden_params(train_env, model, n_envs, episode_length, n_episodes, data_type)
+        test_states1, test_actions1, test_next_states1, test_hidden_params1 = gather_data_with_hidden_params(test_env1, model, test_envs, episode_length, n_episodes, data_type)
+        test_states2, test_actions2, test_next_states2, test_hidden_params2 = gather_data_with_hidden_params(test_env2, model, test_envs, episode_length, n_episodes, data_type)
     else:
-        train_states, train_actions, train_next_states = gather_data_without_hidden_params(train_env, model, n_envs, episode_length, n_episodes, data_type)
-        test_states1, test_actions1, test_next_states1 = gather_data_without_hidden_params(test_env1, model, test_envs, episode_length, n_episodes, data_type)
-        test_states2, test_actions2, test_next_states2 = gather_data_without_hidden_params(test_env2, model, test_envs, episode_length, n_episodes, data_type)
+        train_states, train_actions, train_next_states, train_hidden_params = gather_data_without_hidden_params(train_env, model, n_envs, episode_length, n_episodes, data_type)
+        test_states1, test_actions1, test_next_states1, test_hidden_params1 = gather_data_without_hidden_params(test_env1, model, test_envs, episode_length, n_episodes, data_type)
+        test_states2, test_actions2, test_next_states2, test_hidden_params2 = gather_data_without_hidden_params(test_env2, model, test_envs, episode_length, n_episodes, data_type)
 
     # join testing data
     test_states = torch.cat([test_states1, test_states2], dim=0)
@@ -280,7 +296,9 @@ if __name__ == '__main__':
     torch.save(train_states, os.path.join(save_dir, "train_states.pt"))
     torch.save(train_actions, os.path.join(save_dir, "train_actions.pt"))
     torch.save(train_next_states, os.path.join(save_dir, "train_next_states.pt"))
+    torch.save(train_hidden_params, os.path.join(save_dir, "train_hidden_params.pt"))
 
     torch.save(test_states, os.path.join(save_dir, "test_states.pt"))
     torch.save(test_actions, os.path.join(save_dir, "test_actions.pt"))
     torch.save(test_next_states, os.path.join(save_dir, "test_next_states.pt"))
+    torch.save(test_hidden_params1 + test_hidden_params2, os.path.join(save_dir, "test_hidden_params.pt"))

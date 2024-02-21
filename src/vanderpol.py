@@ -45,11 +45,12 @@ approximate_model_mu = 1.0
 train_type = args.train_type
 test_type = args.test_type
 
-train = False # if not train, uses most recent
-video_fit = False
+train = True # if not train, uses most recent
+video_fit = True
 video_interpolate = False
 image_interpolate = False
-images_flow = True
+images_flow = False
+theta_search = False
 
 assert train_type in ["uniform", "trajectory", "trajectory_ls"]
 assert test_type in ["uniform", "trajectory", "trajectory_ls"]
@@ -123,6 +124,7 @@ def gather_trajectories(model, mus, x_0, t_length=10.0, num_points=1000):
         xs[:, i+1, :] = x_next
         if torch.isnan(x_next).any():
             print("nan")
+            x_next = model(x_now, t_dif)
     return xs, ts
 
 def get_encodings(basis_functions, vanderpol_models, mus, type="uniform"):
@@ -179,7 +181,8 @@ def get_encodings_trajectory(basis_functions, vanderpol_models, mus):
         individual_encodings = true_x_difs * x_difs
         individual_encodings = torch.mean(individual_encodings, dim=1)
         encodings[:, i, :] = individual_encodings
-
+        if torch.isnan(encodings).any():
+            print("nan")
     return encodings * 1e3
 
 def get_encodings_trajectory_ls(basis_functions, vanderpol_models, mus):
@@ -254,6 +257,18 @@ if train:
         t_difs = ts[1:] - ts[:-1]
         y_hat = predict(basis_functions, encodings, xs[:, :-1, :], t_difs)
         loss = torch.nn.MSELoss()(y_hat, xs[:, 1:, :])
+
+        # compute loss by integrating a full trajectory
+        # t_difs = ts[1:] - ts[:-1]
+        # y_hats = []
+        # y_current = xs[:, 0, :]
+        # for i in range(1, xs.shape[1]):
+        #     y_next = predict(basis_functions, encodings, y_current.unsqueeze(1), t_difs[i-1]).squeeze(1)
+        #     y_hats.append(y_next)
+        #     y_current = y_next
+        # y_hats_tensor = torch.stack(y_hats, dim=1)
+        # assert y_hats_tensor.shape == xs[:, 1:, :].shape
+        # loss = torch.nn.MSELoss()(y_hats_tensor, xs[:, 1:, :])
 
         # backprop
         optimizer.zero_grad()
@@ -591,3 +606,67 @@ if images_flow:
 
         plt.savefig(f"{logdir}/vector_field_mu_{mu.item():.2f}.pdf", bbox_inches="tight", pad_inches=0.0)
         # plt.show()
+
+
+if theta_search:
+    # define a bunch of mus and interpolated encodings
+    vanderpol_model1, mu1 = get_vanderpol_models(1, [1.0, 1.0])
+    vanderpol_model2, mu2 = get_vanderpol_models(1, [2.0, 2.0])
+
+    # get encoding
+    encoding1 = get_encodings(basis_functions, vanderpol_model1, mu1, type=test_type)
+    encoding2 = get_encodings(basis_functions, vanderpol_model2, mu2, type=test_type)
+
+
+    # unseen mu
+    unseen_mu = 3
+    num_data_points_observed = 200
+
+    # get a trajectory from unseen mu
+    vanderpol_model_unseen, mu_unseen = get_vanderpol_models(1, [unseen_mu, unseen_mu])
+    init_state = (torch.rand(1, 2) * (x_range[1] - x_range[0]) + x_range[0]).to(device)
+    xs, ts = gather_trajectories(vanderpol_model_unseen, mu_unseen, init_state, t_length=20.0, num_points=2000)
+    example_states = xs[:, :num_data_points_observed, :]
+    example_next_states = xs[:, 1:num_data_points_observed+1, :]
+    future_data = xs[:, num_data_points_observed+1:, :]
+    t_difs = ts[1:] - ts[:-1]
+    t_difs_examples = t_difs[:num_data_points_observed]
+    t_difs_future = t_difs[num_data_points_observed:]
+
+
+    # predict transitions using the encodings
+    predictions1 = predict(basis_functions, encoding1, example_states, t_difs_examples) - example_states
+    predictions2 = predict(basis_functions, encoding2, example_states, t_difs_examples) - example_states
+
+    # find optimal mu via gradient descent
+    mu_estimate = torch.tensor(0.5, requires_grad=True, device=device)
+    opti = torch.optim.Adam([mu_estimate], lr=1e-3)
+    pbar = trange(100000)
+    for descent_step in pbar:
+        approximate_next_state = predictions1.detach() * mu_estimate + predictions2.detach() * (1 - mu_estimate) + example_states.detach()
+        loss = torch.nn.MSELoss()(approximate_next_state, example_next_states.detach())
+        loss.backward()
+        opti.step()
+        opti.zero_grad()
+        pbar.set_description(f"l={loss.item()}, mu={mu_estimate.item():.2f}")
+    print(loss.item())
+    print(mu_estimate.item())
+    # now compute the approximate coefficients
+    encoding_estimate = encoding1 * mu_estimate + encoding2 * (1 - mu_estimate)
+
+    # now predict the future of the trajectory
+    states_predicted_by_estimator = torch.zeros_like(xs)
+    states_predicted_by_estimator[:, :num_data_points_observed+1, :] = xs[:, :num_data_points_observed+1, :]
+    for time in range(num_data_points_observed, states_predicted_by_estimator.shape[1]-1):
+        states_predicted_by_estimator[:, time+1, :] = predict(basis_functions, encoding_estimate, states_predicted_by_estimator[:, time:time+1, :], t_difs[time:time+1])
+
+    # now plot the true trajectory and the estimated trajectory
+    fig, ax = plt.subplots(1, 1)
+    # first plot the point seen in black
+    ax.plot(xs.squeeze(0)[:num_data_points_observed+1, 0].cpu().detach().numpy(), xs.squeeze(0)[:num_data_points_observed+1, 1].cpu().detach().numpy(), color="black")
+    # then plot the future in gray
+    ax.plot(xs.squeeze(0)[num_data_points_observed:, 0].cpu().detach().numpy(), xs.squeeze(0)[num_data_points_observed:, 1].cpu().detach().numpy(), color="gray")
+    # then plot the estimated future in red
+    ax.plot(states_predicted_by_estimator.squeeze(0)[num_data_points_observed:, 0].cpu().detach().numpy(), states_predicted_by_estimator.squeeze(0)[num_data_points_observed:, 1].cpu().detach().numpy(), color="red")
+    plt.savefig(f"{logdir}/theta_search_n={num_data_points_observed}.pdf")
+

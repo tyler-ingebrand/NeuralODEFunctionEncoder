@@ -61,6 +61,7 @@ class VariableCheetahEnv(gym.Env):
         self.env =  gym.make('HalfCheetah-v3', *self.env_args, **self.env_kwargs)
         self.action_space = self.env.action_space
         self.observation_space = self.env.observation_space
+        self.current_dynamics_dict = {}
 
         # path to write xml to
         current_date_time = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -91,6 +92,25 @@ class VariableCheetahEnv(gym.Env):
             fshin_gear = np.random.uniform(self.dynamics_variable_ranges['fshin_gear'][0], self.dynamics_variable_ranges['fshin_gear'][1])
             ffoot_gear = np.random.uniform(self.dynamics_variable_ranges['ffoot_gear'][0], self.dynamics_variable_ranges['ffoot_gear'][1])
 
+            current_dynamics_dict = {
+                'friction': friction,
+                'torso_length': torso_length,
+                'bthigh_length': bthigh_length,
+                'bshin_length': bshin_length,
+                'bfoot_length': bfoot_length,
+                'fthigh_length': fthigh_length,
+                'fshin_length': fshin_length,
+                'ffoot_length': ffoot_length,
+                'bthigh_gear': bthigh_gear,
+                'bshin_gear': bshin_gear,
+                'bfoot_gear': bfoot_gear,
+                'fthigh_gear': fthigh_gear,
+                'fshin_gear': fshin_gear,
+                'ffoot_gear': ffoot_gear,
+            }
+
+            self.current_dynamics_dict = current_dynamics_dict
+
             # create xml file for these parameters
             path = self.create_xml_file(friction, torso_length, bthigh_length, bshin_length, bfoot_length, fthigh_length, fshin_length, ffoot_length, bthigh_gear, bshin_gear, bfoot_gear, fthigh_gear, fshin_gear, ffoot_gear)
 
@@ -98,10 +118,14 @@ class VariableCheetahEnv(gym.Env):
             self.env = gym.make('HalfCheetah-v3', xml_file=path, *self.env_args, **self.env_kwargs)
 
         # return observation
-        return self.env.reset()
+        state, info = self.env.reset()
+        info["dynamics"] = self.current_dynamics_dict
+        return state, info
 
     def step(self, action):
-        return self.env.step(action)
+        next_state, reward, terminated, truncated, info = self.env.step(action)
+        info["dynamics"] = self.current_dynamics_dict
+        return next_state, reward, terminated, truncated, info
 
     def render(self):
         return self.env.render()

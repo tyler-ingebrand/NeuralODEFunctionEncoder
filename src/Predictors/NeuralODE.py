@@ -50,7 +50,28 @@ class NeuralODE(Predictor):
 
     # given an initial state and a list(tensor) of actions, predicts a full trajectory
     def predict_trajectory(self, initial_state:tensor, actions:tensor, example_states:tensor, example_actions:tensor, example_next_states:tensor) -> tensor:
-        raise Exception("Not implemented")
+        number_envs = initial_state.shape[0]
+        number_trajectories = initial_state.shape[1]
+        time_horizon = actions.shape[2]
+        number_examples = example_states.shape[1]
+        assert initial_state.shape == (number_envs, number_trajectories, self.state_size)
+        assert actions.shape == (number_envs, number_trajectories, time_horizon, self.action_size)
+        assert example_states.shape == (number_envs, number_examples, self.state_size)
+        assert example_actions.shape == (number_envs, number_examples, self.action_size)
+        assert example_next_states.shape == (number_envs, number_examples, self.state_size)
+
+        state_predictions = torch.zeros(number_envs, number_trajectories, time_horizon + 1, self.state_size, device=initial_state.device)
+        state_predictions[:, :, 0, :] = initial_state
+        for j in range(state_predictions.shape[0]):
+            for i in range(time_horizon):
+                # predict next state, save it
+                current_action = actions[j, :, i, :]
+                current_states = state_predictions[j, :, i, :]
+                next_state_predictions, _ = self.predict(current_states, current_action, example_states, example_actions, example_next_states)
+                state_predictions[j, :, i+1, :] = next_state_predictions
+
+        return state_predictions[:, :, 1:, :]
+
 
 if __name__ == "__main__":
     model = NeuralODE(5, 3, True)

@@ -15,6 +15,7 @@ argparser.add_argument("--env", type=str, required=True)
 argparser.add_argument("--seed", type=int, default=0)
 argparser.add_argument("--device", type=str, default="cuda:0")
 argparser.add_argument("--ignore_actions", action="store_true")
+argparser.add_argument("--normalize", action="store_true")
 argparser.add_argument("--steps", type=int, default=1000)
 argparser.add_argument('--data_type', help='The method to use to gather data', default='random')
 
@@ -31,7 +32,7 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 
 # load the data
-train_states, train_actions, train_next_states, test_states, test_actions, test_next_states = load_data(args.env, policy_type=args.data_type)
+train_states, train_actions, train_next_states, test_states, test_actions, test_next_states = load_data(args.env, policy_type=args.data_type, normalize=args.normalize)
 state_size, action_size = train_states.shape[-1], train_actions.shape[-1]
 
 # convert device
@@ -121,8 +122,8 @@ for step in trange(args.steps):
         predicted_next_states, train_info = predictor.predict(states, actions, example_states, example_actions, example_next_states)
         loss2 = torch.nn.functional.mse_loss(predicted_next_states, next_states)
         total_loss += loss2.item() / grad_accumulation_steps
-        if loss2 > 10:
-            print("?")
+        # if loss2 > 10:
+        #     print("?")
 
         # backprop
         loss2.backward()

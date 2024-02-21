@@ -2,6 +2,7 @@ from typing import Tuple
 
 import torch
 from torch import tensor
+from tqdm import trange
 
 try:
     from Predictor import Predictor
@@ -72,8 +73,28 @@ class FE_Residuals(Predictor):
 
     # given an initial state and a list(tensor) of actions, predicts a full trajectory
     def predict_trajectory(self, initial_state:tensor, actions:tensor, example_states:tensor, example_actions:tensor, example_next_states:tensor) -> tensor:
-        raise Exception("Not implemented")
+        number_envs = initial_state.shape[0]
+        number_trajectories = initial_state.shape[1]
+        time_horizon = actions.shape[2]
+        number_examples = example_states.shape[1]
+        assert initial_state.shape == (number_envs, number_trajectories, self.state_size)
+        assert actions.shape == (number_envs, number_trajectories, time_horizon, self.action_size)
+        assert example_states.shape == (number_envs, number_examples, self.state_size)
+        assert example_actions.shape == (number_envs, number_examples, self.action_size)
+        assert example_next_states.shape == (number_envs, number_examples, self.state_size)
 
+        state_predictions = torch.zeros(number_envs, number_trajectories, time_horizon + 1, self.state_size, device=initial_state.device)
+        state_predictions[:, :, 0, :] = initial_state
+        num_functions_at_once = 40
+        for j in range(0, state_predictions.shape[0], num_functions_at_once):
+            for i in range(time_horizon):
+                # predict next state, save it
+                current_action = actions[j:j+num_functions_at_once, :, i, :]
+                current_states = state_predictions[j:j+num_functions_at_once, :, i, :]
+                next_state_predictions, _ = self.predict(current_states, current_action, example_states[j:j+num_functions_at_once], example_actions[j:j+num_functions_at_once], example_next_states[j:j+num_functions_at_once])
+                state_predictions[j:j+num_functions_at_once, :, i+1, :] = next_state_predictions
+
+        return state_predictions[:, :, 1:, :]
 if __name__ == "__main__":
     model = FE_Residuals(5, 3, True)
     states, actions, example_states, example_actions, example_next_states = torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5)

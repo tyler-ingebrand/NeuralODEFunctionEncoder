@@ -44,6 +44,7 @@ class VariableAntEnv(gym.Env):
         options: Optional[dict] = None,
         reset_hps:bool = True,
     ):
+        raise Exception("Add current dynamics dict")
         # sample env parameters
         if reset_hps:
             grav = np.random.uniform(*self.dynamics_variable_ranges['gravity'])

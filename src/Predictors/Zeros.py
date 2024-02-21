@@ -6,26 +6,12 @@ try:
     from Predictor import Predictor
 except:
     from .Predictor import Predictor
-class MLP(Predictor):
+class Zeros(Predictor):
     def __init__(self, state_size:int, action_size:int, use_actions:bool=True, hidden_size=512):
         super().__init__(state_size, action_size, use_actions)
         self.state_size = state_size
         self.action_size = action_size
         self.use_actions = use_actions
-        input_size = state_size + (action_size if use_actions else 0)
-        output_size = state_size
-        self.model = torch.nn.Sequential(
-            torch.nn.Linear(input_size, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, output_size)
-        )
-
 
     # predicts the next states given states and actions
     def predict(self, states:tensor, actions:tensor, example_states:tensor, example_actions:tensor, example_next_states:tensor, average_function_only=False) -> Tuple[tensor, dict]:
@@ -34,9 +20,7 @@ class MLP(Predictor):
         assert example_states.shape[-1] == self.state_size, "Input size is {}, expected {}".format(example_states.shape[-1], self.state_size)
         assert example_actions.shape[-1] == self.action_size, "Input size is {}, expected {}".format(example_actions.shape[-1], self.action_size)
         assert example_next_states.shape[-1] == self.state_size, "Input size is {}, expected {}".format(example_next_states.shape[-1], self.state_size)
-
-        inputs = torch.cat([states, actions], dim=-1) if self.use_actions else states
-        return self.model(inputs), {}
+        return torch.zeros(states.shape), {}
 
 
     # given an initial state and a list(tensor) of actions, predicts a full trajectory
@@ -52,16 +36,6 @@ class MLP(Predictor):
         assert example_next_states.shape == (number_envs, number_examples, self.state_size)
 
         state_predictions = torch.zeros(number_envs, number_trajectories, time_horizon + 1, self.state_size, device=initial_state.device)
-        state_predictions[:, :, 0, :] = initial_state
-
-        for i in range(time_horizon):
-            # predict next state, save it
-            current_action = actions[:, :, i, :]
-            current_states = state_predictions[:, :, i, :]
-            next_state_predictions, _ = self.predict(current_states, current_action, example_states, example_actions, example_next_states)
-            state_predictions[:, :, i+1, :] = next_state_predictions
-
-
         return state_predictions[:, :, 1:, :]
 
 if __name__ == "__main__":
