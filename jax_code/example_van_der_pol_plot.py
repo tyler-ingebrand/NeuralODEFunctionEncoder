@@ -44,14 +44,15 @@ with open("van_der_pol_model_params.pkl", "rb") as f:
 rng = random.PRNGKey(0)
 
 # Plot an evaluation of the model.
-n_example_data = 20
+n_example_data = 1000
 rng, key1, key2 = random.split(rng, 3)
 x_data = jnp.array([[-2.0, 2.0]])
 t_diff = random.uniform(key1, (1, n_example_data), minval=1e-5, maxval=1e-1)
 t_data = jnp.cumsum(t_diff, axis=1)
 t_data = jnp.concatenate([jnp.zeros((1, 1)), t_data], axis=1)
 
-mu = random.uniform(key2, (1,), minval=0.1, maxval=2.0)
+# mu = random.uniform(key2, (1,), minval=0.1, maxval=2.0)
+mu = random.uniform(key2, (1,), minval=1.0, maxval=1.0)
 
 y_data = van_der_pol_model_vmap(x_data, t_data, mu)
 
@@ -64,27 +65,41 @@ x_eval = y_data[:, -1, :]
 t_eval = jnp.linspace(0.0, 20.0, n_horizon)
 t_eval = t_eval.reshape(1, -1)
 
+
+# try calculating one step at a time, to see if its different
+y_preds2 = jnp.zeros((1, n_horizon, 2))
+y_preds2 = y_preds2.at[:, 0, :].set(x_eval)
+for time in range(n_horizon):
+    t_dif = t_eval[:, time+1] - t_eval[:, time]
+    y_current = y_preds2[:, time, :]
+    # make it go from 0 to t_dif
+    t_dif = jnp.concatenate([jnp.zeros((1, 1)), jnp.expand_dims(t_dif, axis=1)], axis=1)
+    g = neural_ode_model_params_vmap(params, y_current, t_dif)
+    g = g[:, :, -1, :]
+    g = g - y_current
+    next_y = jnp.einsum("fk,kfd->d", c, g) + y_current
+    y_preds2 = y_preds2.at[:, time+1, :].set(next_y)
+
 _x_eval = jnp.expand_dims(x_eval, axis=1)
 g = neural_ode_model_params_vmap(params, x_eval, t_eval) - _x_eval
 y_pred = jnp.einsum("jk,kjtd->jtd", c, g) + _x_eval
 
-
 y_true = van_der_pol_model_vmap(x_eval, t_eval, mu)
-
 
 fig = plt.figure(figsize=(8, 8))
 ax = fig.add_subplot(111)
 
 # Plot the trajectory.
-ax.plot(y_data[0, :, 0], y_data[0, :, 1], "C0", lw=1)
-ax.plot(y_true[0, :, 0], y_true[0, :, 1], "C2", lw=1)
+ax.plot(y_data[0, :, 0], y_data[0, :, 1], "C0", label="Example data", lw=1)
+ax.plot(y_true[0, :, 0], y_true[0, :, 1], "C2", label="Groundtruth", lw=1)
 
 # Plot the prediction.
-ax.plot(y_pred[0, :, 0], y_pred[0, :, 1], "C1", lw=1)
+# ax.plot(y_pred[0, :, 0], y_pred[0, :, 1], "C1", label="Predicted", lw=1)
+ax.plot(y_preds2[0, :, 0], y_preds2[0, :, 1], "C3", label="Predicted2", lw=1)
 
 # Plot the unscaled g.
-g = jnp.einsum("jk,kjtd->kjtd", c, g) + _x_eval
-for i in range(8):
-    ax.plot(g[i, 0, :, 0], g[i, 0, :, 1], "C3", lw=1)
-
+# g = jnp.einsum("jk,kjtd->kjtd", c, g) + _x_eval
+# for i in range(8):
+#     ax.plot(g[i, 0, :, 0], g[i, 0, :, 1], "C3", lw=1)
+plt.legend()
 plt.show()

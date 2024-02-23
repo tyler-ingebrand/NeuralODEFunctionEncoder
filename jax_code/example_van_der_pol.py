@@ -40,10 +40,14 @@ van_der_pol_model_vmap = jax.vmap(van_der_pol_model, in_axes=(0, 0, 0))
 
 def loss_function(params, x, t, y, c):
     """Loss function."""
+    xs = y[:, :-1, :]
+    ys = y[:, 1:, :]
+    t_difs = t[:, 1:] - t[:, :-1]
+    # append 0 infront of tdifs, so the last dimension is of size 2, and the first is 0
+    t_difs = jnp.concatenate([jnp.zeros((t_difs.shape[0], t_difs.shape[1],  1)), jnp.expand_dims(t_difs, axis=2)], axis=2)
 
-    y_hat = evaluate_model(params, x, t, c)
-
-    loss = jnp.mean(jnp.linalg.norm(y - y_hat, ord=2, axis=1) ** 2)
+    y_hats = evaluate_model(params, xs, t_difs, c)
+    loss = jnp.mean(jnp.linalg.norm(ys - y_hats, ord=2, axis=1) ** 2)
 
     return loss
 
@@ -56,32 +60,33 @@ layer_sizes = [n_dim, 100, n_dim]
 rng, params = init_params(rng, layer_sizes, n_basis)
 
 
-n_batches = 10000
-batch_size = 5
+n_batches = 500 # num gradient steps
+batch_size = 10 # num functions
 
-n_samples = 100
-n_eval_samples = 10
+n_samples = 1000 # samples for coefficients and testing
+# n_eval_samples = 10 # unused
 
 
-schedule = optax.exponential_decay(
-    init_value=1e-1,
-    transition_steps=n_batches,
-    decay_rate=0.001,
-    transition_begin=1,
-)
-optimizer = optax.adamw(learning_rate=schedule)
+# schedule = optax.exponential_decay(
+#     init_value=1e-1,
+#     transition_steps=n_batches,
+#     decay_rate=0.001,
+#     transition_begin=1,
+# )
+optimizer = optax.adam(learning_rate=1e-3)
 optimizer = optax.chain(
     optax.clip_by_global_norm(1.0),
     optimizer,
 )
 opt_state = optimizer.init(params)
 
-
-for i in tqdm(range(n_batches)):
+tbar = tqdm(range(n_batches))
+for i in tbar:
     rng, key1, key2, key3 = random.split(rng, 4)
-    x_data = random.uniform(key1, (batch_size, n_dim), minval=-5.0, maxval=5.0)
+    x_data = random.uniform(key1, (batch_size, n_dim), minval=-2.0, maxval=2.0)
     t_diff = random.uniform(key2, (batch_size, n_samples), minval=1e-5, maxval=1e-1)
-    mu = random.uniform(key3, (batch_size,), minval=0.1, maxval=2.0)
+    # mu = random.uniform(key3, (batch_size,), minval=0.1, maxval=2.0)
+    mu = random.uniform(key3, (batch_size,), minval=1.0, maxval=1.0)
 
     t_data = jnp.cumsum(t_diff, axis=1)
     t_data = jnp.concatenate([jnp.zeros((batch_size, 1)), t_data], axis=1)
@@ -109,8 +114,7 @@ for i in tqdm(range(n_batches)):
     updates, opt_state = optimizer.update(grad, opt_state, params)
     params = optax.apply_updates(params, updates)
 
-    tqdm.write(f"Batch {i + 1}/{n_batches}, Loss: {loss}")
-
+    tbar.set_description(f"Loss: {loss:2f}")
 
 # Save the model params.
 with open("van_der_pol_model_params.pkl", "wb") as f:

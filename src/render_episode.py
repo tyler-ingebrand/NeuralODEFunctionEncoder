@@ -13,12 +13,12 @@ hidden_param_index = 5
 trajectory_index = 0
 
 # script parameters
-env_str = "HalfCheetah-v3"
+env_str = "Ant-v3" # "HalfCheetah-v3"
 policy_type = "random"
-datetime_str = "2024-02-20_17-24-57"
-alg_type = "FE_NeuralODE_Residuals" # "FE_NeuralODE_Residuals"
+datetime_str = "2024-02-23_16-04-50"
+alg_type = "MLP" # "FE_NeuralODE_Residuals"
 use_actions = True
-normalize = False
+normalize = True
 
 
 seed = 0
@@ -27,7 +27,7 @@ np.random.seed(seed)
 
 with torch.no_grad():
     # load data
-    _, _, _, states, actions, next_states, _, hidden_params = load_data(env_str, policy_type, normalize=False, get_groundtruth_hidden_params=True)
+    _, _, _, states, actions, next_states, train_hidden_params, hidden_params = load_data(env_str, policy_type, normalize=False, get_groundtruth_hidden_params=True)
     _, _, _, _, _, _, mean, std = load_data(env_str, policy_type, normalize=True, get_normalize_params=True)
 
     print("Means: ", mean)
@@ -41,7 +41,7 @@ with torch.no_grad():
         env = VariableCheetahEnv(hidden_params_dict, render_mode="rgb_array")
     elif env_str == "Ant-v3":
         from VariableAntEnv import VariableAntEnv
-        env = VariableAntEnv({}, render_mode="rgb_array")
+        env = VariableAntEnv(hidden_params_dict, render_mode="rgb_array")
     else:
         raise ValueError(f"Unknown env '{env_str}'")
     _ = env.reset()
@@ -69,6 +69,12 @@ with torch.no_grad():
     elif alg_type == "FE_NeuralODE_Residuals":
         from Predictors.FE_NeuralODE_Residuals import FE_NeuralODE_Residuals
         predictor = FE_NeuralODE_Residuals(state_shape, action_shape, use_actions=use_actions)
+    elif alg_type == "Oracle":
+        from Predictors.Oracle import Oracle
+        min_vals_hps = {key: min([x[key] for x in train_hidden_params]) for key in train_hidden_params[0].keys()}
+        max_vals_hps = {key: max([x[key] for x in train_hidden_params]) for key in train_hidden_params[0].keys()}
+        predictor = Oracle(state_shape, action_shape, min_vals_hps=min_vals_hps, max_vals_hps=max_vals_hps, use_actions=use_actions)
+        del train_hidden_params
     else:
         raise Exception("Unknown predictor")
     predictor.load_state_dict(torch.load(os.path.join(alg_dir, "model.pt")))
@@ -109,8 +115,13 @@ with torch.no_grad():
     for time_index in trange(trajectory.shape[0]):
         # set true env rendering
         true_state = trajectory[time_index, :]
-        qpos = true_state[:9]
-        qvel = true_state[9:]
+        if env_str == "HalfCheetah-v3":
+            qpos = true_state[:9]
+            qvel = true_state[9:]
+        else:
+            qpos = true_state[:15]
+            qvel = true_state[15:]
+
         env.env.set_state(qpos, qvel)
         true_img = env.render()
 
@@ -119,8 +130,12 @@ with torch.no_grad():
             current_state_approx = normalized_current_state_approx * std + mean
         else:
             current_state_approx = normalized_current_state_approx
-        qpos = current_state_approx[:9].cpu().numpy()
-        qvel = current_state_approx[9:].cpu().numpy()
+        if env_str == "HalfCheetah-v3":
+            qpos = current_state_approx[:9].cpu().numpy()
+            qvel = current_state_approx[9:].cpu().numpy()
+        else:
+            qpos = current_state_approx[:15].cpu().numpy()
+            qvel = current_state_approx[15:].cpu().numpy()
         env.env.set_state(qpos, qvel)
         approx_img = env.render()
 
@@ -133,7 +148,10 @@ with torch.no_grad():
 
         # calculate approx next state
         action = trajectory_actions[time_index, :]
-        normalized_current_state_approx, _ = predictor.predict(normalized_current_state_approx.unsqueeze(0).unsqueeze(0), action.unsqueeze(0).unsqueeze(0), example_states.unsqueeze(0), example_actions.unsqueeze(0), example_next_states.unsqueeze(0))
+        if alg_type == "Oracle":
+            normalized_current_state_approx, _ = predictor.predict(normalized_current_state_approx.unsqueeze(0).unsqueeze(0), action.unsqueeze(0).unsqueeze(0), hidden_params=[hidden_params[hidden_param_index]])
+        else:
+            normalized_current_state_approx, _ = predictor.predict(normalized_current_state_approx.unsqueeze(0).unsqueeze(0), action.unsqueeze(0).unsqueeze(0), example_states.unsqueeze(0), example_actions.unsqueeze(0), example_next_states.unsqueeze(0))
         normalized_current_state_approx = normalized_current_state_approx.squeeze(0).squeeze(0)
 
         # create an image, write loss to top corner, write labels to bottom corner, write time to the top corner

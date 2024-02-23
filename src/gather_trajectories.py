@@ -31,11 +31,10 @@ def load_data(env:str, policy_type:str, load_dir:Union[str, None]=None, normaliz
 
     # if ant, remove contact forces
     if env == "Ant-v3":
-        raise Exception("Should be 27 if not using x dim, 28 else")
-        train_states = train_states[:, :, :28]
-        train_next_states = train_next_states[:, :, :28]
-        test_states = test_states[:, :, :28]
-        test_next_states = test_next_states[:, :, :28]
+        train_states = train_states[:, :, :, :29]
+        train_next_states = train_next_states[:, :, :, :29]
+        test_states = test_states[:, :, :, :29]
+        test_next_states = test_next_states[:, :, :, :29]
 
     # normalize
     if normalize:
@@ -222,9 +221,23 @@ if __name__ == '__main__':
     # create env
     if args.env == 'Ant-v3':
         from VariableAntEnv import VariableAntEnv
-        train_env = VariableAntEnv({"gravity":(-9.8, -4.0)}, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
-        test_env1 = VariableAntEnv({"gravity":(-4.0, -0.5)}, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
-        test_env2 = VariableAntEnv({"gravity":(-13.8, -9.8)}, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
+        ANKLE_LENGTH = (2*0.4**2)**0.5
+        LEG_LENGTH = (2*0.2**2)**0.5
+        foot_max, foot_min = ANKLE_LENGTH / 2, ANKLE_LENGTH * 1.5  # +/- 50%
+        leg_max, leg_min = LEG_LENGTH / 2, LEG_LENGTH * 1.5
+        vars = { # "gravity": (-9.8,  -5),
+           "front_left_leg_length": (leg_min, leg_max),
+            "front_left_foot_length": (foot_min, foot_max),
+            "front_right_leg_length": (leg_min, leg_max),
+            "front_right_foot_length": (foot_min, foot_max),
+            "back_left_leg_length": (leg_min, leg_max),
+            "back_left_foot_length": (foot_min, foot_max),
+            "back_right_leg_length": (leg_min, leg_max),
+            "back_right_foot_length": (foot_min, foot_max)
+            }
+        train_env = VariableAntEnv(vars, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
+        test_env1 = VariableAntEnv(vars, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
+        test_env2 = VariableAntEnv(vars, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
 
     else:
         from VariableCheetahEnv import VariableCheetahEnv
@@ -245,9 +258,6 @@ if __name__ == '__main__':
             'fshin_gear': (0, 60 * 1.5),
             'ffoot_gear': (0, 30 * 1.5),
         }
-        # train_env = VariableCheetahEnv({"torso_length":(0.75, 1.25)}, render_mode=render_mode)
-        # test_env1 = VariableCheetahEnv({"torso_length":(1.25, 1.5)}, render_mode=render_mode)
-        # test_env2 = VariableCheetahEnv({"torso_length":(0.5, 0.75)}, render_mode=render_mode)
         train_env = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
         test_env1 = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
         test_env2 = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
