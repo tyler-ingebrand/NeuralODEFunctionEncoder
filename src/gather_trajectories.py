@@ -7,11 +7,12 @@ import torch
 from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from tqdm import trange
+from ExploratoryPID import ExploratoryPID
 
 # loads the data from the newest directory in logs/ant/policy or logs/cheetah/policy. Or, if load_dir is specified, from there
 def load_data(env:str, policy_type:str, load_dir:Union[str, None]=None, normalize=True, get_groundtruth_hidden_params=False, get_normalize_params = False):
     if not load_dir:
-        load_dir = f"logs/{'ant' if env == 'Ant-v3' else 'cheetah'}/policy"
+        load_dir = f"logs/{'ant' if env == 'Ant-v3' else 'cheetah' if env == 'HalfCheetah-v3' else 'drone'}/policy"
         # list all subdirs, get the newest one
         dirs = [d for d in os.listdir(load_dir) if os.path.isdir(os.path.join(load_dir, d))]
         latest = max(dirs, key=lambda d: os.path.getmtime(os.path.join(load_dir, d)))
@@ -196,6 +197,89 @@ def gather_data_without_hidden_params(env, model, n_envs, episode_length, n_epis
     assert len(hidden_params) == n_envs
     return states, actions, next_states, hidden_params
 
+def drone_pid_data_gathering(env, n_envs, episode_length, n_episodes):
+    with torch.no_grad():
+        # import os, psutil
+        # process = psutil.Process()
+        # create space to store data
+        states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
+        actions = torch.zeros((n_envs, n_episodes, episode_length, env.action_space.shape[0]))
+        next_states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
+        hidden_params = []
+        transitions_per_env = n_episodes * episode_length
+
+        # import psutil
+
+        # gather data
+        for env_index in trange(n_envs):
+            # print(process.memory_info().rss / 1e6 ,"MB")  # in bytes
+            obs, info = env.reset()  # resets hidden params to something new
+            hps = info["dynamics"]
+            hps = {key: (value, value) for key, value in hps.items()}
+
+            episode_index = 0
+            while episode_index < n_episodes:
+                # print(psutil.Process().memory_info().rss / 1e6, " MB")
+                # soft reset env to get a new goal location
+                obs, info = env.reset(reset_hps=False)
+
+                # create a new pid
+                ctrl_env_create = lambda : VariableDroneEnv(hps, render_mode=None)
+                ctrl = ExploratoryPID(env_func=ctrl_env_create)
+
+                # create buffer for this episodes data
+                episode_states = torch.zeros((episode_length, env.observation_space.shape[0]))
+                episode_actions = torch.zeros((episode_length, env.action_space.shape[0]))
+                episode_next_states = torch.zeros((episode_length, env.observation_space.shape[0]))
+
+                # make sure it did not terminate early
+                terminated_early = False
+
+                # run the pid, store results
+                for step_index in range(episode_length):
+                    # get action
+                    action = ctrl.select_action(obs, info)
+                    # noise = np.random.normal(-0.002, 0.002, action.shape)
+                    # action += noise
+                    # action = np.clip(action, env.action_space.low, env.action_space.high)
+                    # the pid controller handles noise
+
+                    # transition
+                    nobs, reward, terminated, truncated, info = env.step(action)
+
+                    if step_index < episode_length - 1 and (terminated or truncated):
+                        terminated_early = True
+                        break
+
+                    # store data
+                    episode_states[step_index] = torch.tensor(obs)
+                    episode_actions[step_index] = torch.tensor(action)
+                    episode_next_states[step_index] = torch.tensor(nobs)
+
+                    # go next
+                    obs = nobs
+
+                # make sure to free memory, bullet does not do it for you
+                ctrl.env.close()
+                del ctrl, ctrl_env_create
+
+                # check if episode terminated early
+                if terminated_early:
+                    continue
+                else:
+                    # save data and hps
+                    states[env_index, episode_index] = episode_states
+                    actions[env_index, episode_index] = episode_actions
+                    next_states[env_index, episode_index] = episode_next_states
+                    episode_index += 1
+            hidden_params.append(info["dynamics"])
+
+
+        assert len(hidden_params) == n_envs
+        return states, actions, next_states, hidden_params
+
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--env', help='environment ID', default='Ant-v3')
@@ -207,7 +291,7 @@ if __name__ == '__main__':
     argparser.add_argument('--visualize', help='Visualize the policy, does not save data', action='store_true')
     argparser.add_argument('--xdim', help='To include x dim', action='store_false')
     args = argparser.parse_args()
-    assert args.env is not None and args.env in ['Ant-v3', 'HalfCheetah-v3']
+    assert args.env is not None and args.env in ['Ant-v3', 'HalfCheetah-v3', 'drone']
     assert args.alg is not None and args.alg in ['ppo', 'sac']
     assert args.data_type is not None and args.data_type in ['random', 'on-policy', "precise", "precise2"]
     use_x_dim = args.xdim
@@ -223,23 +307,32 @@ if __name__ == '__main__':
         from VariableAntEnv import VariableAntEnv
         ANKLE_LENGTH = (2*0.4**2)**0.5
         LEG_LENGTH = (2*0.2**2)**0.5
-        foot_max, foot_min = ANKLE_LENGTH / 2, ANKLE_LENGTH * 1.5  # +/- 50%
-        leg_max, leg_min = LEG_LENGTH / 2, LEG_LENGTH * 1.5
-        vars = { # "gravity": (-9.8,  -5),
-           "front_left_leg_length": (leg_min, leg_max),
-            "front_left_foot_length": (foot_min, foot_max),
-            "front_right_leg_length": (leg_min, leg_max),
-            "front_right_foot_length": (foot_min, foot_max),
-            "back_left_leg_length": (leg_min, leg_max),
-            "back_left_foot_length": (foot_min, foot_max),
-            "back_right_leg_length": (leg_min, leg_max),
-            "back_right_foot_length": (foot_min, foot_max)
+        gear_max, gear_min = 60, 60
+        foot_min, foot_max  = ANKLE_LENGTH / 2, ANKLE_LENGTH * 1.5  # +/- 50%
+        leg_min, leg_max = LEG_LENGTH, LEG_LENGTH * 1.5
+        vars = {    "gravity": (-9.8,  -9.8),
+                    "front_left_leg_length": (leg_min, leg_max),
+                    "front_left_foot_length": (foot_min, foot_max),
+                    "front_right_leg_length": (leg_min, leg_max),
+                    "front_right_foot_length": (foot_min, foot_max),
+                    "back_left_leg_length": (leg_min, leg_max),
+                    "back_left_foot_length": (foot_min, foot_max),
+                    "back_right_leg_length": (leg_min, leg_max),
+                    "back_right_foot_length": (foot_min, foot_max),
+                    "front_left_gear": (gear_min, gear_max),
+                    "front_right_gear": (gear_min, gear_max),
+                    "back_left_gear": (gear_min, gear_max),
+                    "back_right_gear": (gear_min, gear_max),
+                    "front_left_ankle_gear": (gear_min, gear_max),
+                    "front_right_ankle_gear": (gear_min, gear_max),
+                    "back_left_ankle_gear": (gear_min, gear_max),
+                    "back_right_ankle_gear": (gear_min, gear_max),
             }
         train_env = VariableAntEnv(vars, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
         test_env1 = VariableAntEnv(vars, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
         test_env2 = VariableAntEnv(vars, render_mode=render_mode, terminate_when_unhealthy=False, exclude_current_positions_from_observation=not use_x_dim)
 
-    else:
+    elif args.env == 'HalfCheetah-v3':
         from VariableCheetahEnv import VariableCheetahEnv
 
         vars = {
@@ -261,9 +354,20 @@ if __name__ == '__main__':
         train_env = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
         test_env1 = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
         test_env2 = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
+    else:
+        from VariableDroneEnvironment import VariableDroneEnv
+        vars = {
+            'M': (0.022, 0.032),
+            "Ixx": (1.3e-5, 1.5e-5),
+            "Iyy": (1.3e-5, 1.5e-5),
+            "Izz": (2.1e-5, 2.2e-5)
+           }
+        train_env = VariableDroneEnv(vars, render_mode=render_mode)
+        test_env1 = VariableDroneEnv(vars, render_mode=render_mode, no_crash=True)
+        test_env2 = VariableDroneEnv(vars, render_mode=render_mode, no_crash=True)
 
     # load trained policy
-    load_dir = f"logs/{'ant' if args.env == 'Ant-v3' else 'cheetah'}/policy"
+    load_dir = f"logs/{'ant' if args.env == 'Ant-v3' else 'cheetah' if args.env == 'HalfCheetah-v3' else 'drone'}/policy"
 
     # list all subdirs, get the newest one
     dirs = [d for d in os.listdir(load_dir) if os.path.isdir(os.path.join(load_dir, d))]
@@ -276,7 +380,7 @@ if __name__ == '__main__':
 
     # get parameters
     n_envs = args.num_envs
-    episode_length = 1000
+    episode_length = 125 if args.env == 'drone' else 1000
     n_episodes = args.transitions_per_env // episode_length
     data_type = args.data_type
     test_envs = max(1, n_envs // 10)
@@ -285,6 +389,11 @@ if __name__ == '__main__':
         print("This is only to see whats happening, does not generate data")
         visualize(train_env, args)
         exit()
+    if args.env == "drone":
+        train_states, train_actions, train_next_states, train_hidden_params = drone_pid_data_gathering(train_env, n_envs, episode_length, n_episodes)
+        test_states1, test_actions1, test_next_states1, test_hidden_params1 = drone_pid_data_gathering(test_env1, test_envs, episode_length, n_episodes)
+        test_states2, test_actions2, test_next_states2, test_hidden_params2 = drone_pid_data_gathering(test_env2, test_envs, episode_length, n_episodes)
+
     elif args.data_type == "random" or args.data_type == "on-policy":
         train_states, train_actions, train_next_states, train_hidden_params = gather_data_with_hidden_params(train_env, model, n_envs, episode_length, n_episodes, data_type)
         test_states1, test_actions1, test_next_states1, test_hidden_params1 = gather_data_with_hidden_params(test_env1, model, test_envs, episode_length, n_episodes, data_type)

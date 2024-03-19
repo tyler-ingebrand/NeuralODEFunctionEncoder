@@ -250,12 +250,36 @@ class VariableCheetahEnv(gym.Env):
 
 
 if __name__ == '__main__':
-    env = VariableCheetahEnv({"torso_length": (0.5, 1.5)}, render_mode='human')
+    vars = {
+            'friction': (0.0, 1.0),
+            'torso_length': (1 * 0.5, 1 * 1.5),
+            'bthigh_length': (0.145 * 0.5, 0.145 * 1.5),
+            'bshin_length': (0.15 * 0.5, 0.15 * 1.5),
+            'bfoot_length': (0.094 * 0.5, 0.094 * 1.5),
+            'fthigh_length': (0.133 * 0.5, 0.133 * 1.5),
+            'fshin_length': (0.106 * 0.5, 0.106 * 1.5),
+            'ffoot_length': (0.07 * 0.5, 0.07 * 1.5),
+            'bthigh_gear': (0, 120 * 1.5),
+            'bshin_gear': (0, 90 * 1.5),
+            'bfoot_gear': (0, 60 * 1.5),
+            'fthigh_gear': (0, 120 * 1.5),
+            'fshin_gear': (0, 60 * 1.5),
+            'ffoot_gear': (0, 30 * 1.5),
+        }
+    env = VariableCheetahEnv(vars, render_mode='rgb_array')
     print("dt = ", env.env.unwrapped.dt)
     # loop and render to make sure its working
-    for _ in range(10_000):
-        if _ % 100 == 0:
-            env.reset()
-        env.render()
-        time.sleep(0.01)
-        env.step(env.action_space.sample())
+    # for _ in range(10_000):
+    #     if _ % 100 == 0:
+    #         env.reset()
+    #     env.render()
+    #     time.sleep(0.01)
+    #     env.step(env.action_space.sample())
+
+
+    env.reset()
+    img = env.render()
+    # save it to png
+    import matplotlib.image
+
+    matplotlib.image.imsave('halfcheetah.png', img)

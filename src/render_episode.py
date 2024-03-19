@@ -9,14 +9,16 @@ from tqdm import trange
 from gather_trajectories import load_data
 
 
-hidden_param_index = 5
+hidden_param_index = 2
 trajectory_index = 0
 
 # script parameters
-env_str = "Ant-v3" # "HalfCheetah-v3"
+env_str = 'drone' # "Ant-v3" # "HalfCheetah-v3" # 'drone
 policy_type = "random"
-datetime_str = "2024-02-23_16-04-50"
-alg_type = "MLP" # "FE_NeuralODE_Residuals"
+datetime_str = "2024-03-08_23-09-07"
+alg_type = "FE_NeuralODE_Residuals"
+# datetime_str = "2024-03-08_21-29-13"
+# alg_type = "MLP"
 use_actions = True
 normalize = True
 
@@ -42,6 +44,9 @@ with torch.no_grad():
     elif env_str == "Ant-v3":
         from VariableAntEnv import VariableAntEnv
         env = VariableAntEnv(hidden_params_dict, render_mode="rgb_array")
+    elif env_str == "drone":
+        from VariableDroneEnvironment import VariableDroneEnv
+        env = VariableDroneEnv(hidden_params_dict, render_mode="rgb_array")
     else:
         raise ValueError(f"Unknown env '{env_str}'")
     _ = env.reset()
@@ -50,7 +55,7 @@ with torch.no_grad():
     state_shape, action_shape = states.shape[-1], actions.shape[-1]
 
     # load a predictor
-    alg_dir = f"logs/{'ant' if env_str == 'Ant-v3' else 'cheetah'}/predictor/{datetime_str}/{alg_type}/{policy_type}"
+    alg_dir = f"logs/{'ant' if env_str == 'Ant-v3' else 'cheetah' if env_str == 'HalfCheetah-v3' else 'drone'}/predictor/{datetime_str}/{alg_type}/{policy_type}"
     if alg_type == "MLP":
         from Predictors.MLP import MLP
         predictor = MLP(state_shape, action_shape, use_actions=use_actions)
@@ -118,11 +123,15 @@ with torch.no_grad():
         if env_str == "HalfCheetah-v3":
             qpos = true_state[:9]
             qvel = true_state[9:]
-        else:
+            env.env.set_state(qpos, qvel)
+        elif env_str == "Ant-v3":
             qpos = true_state[:15]
             qvel = true_state[15:]
+            env.env.set_state(qpos, qvel)
+        else:
+            env.set_state(true_state)
 
-        env.env.set_state(qpos, qvel)
+        # render image
         true_img = env.render()
 
         # set approx env rendering
@@ -133,10 +142,15 @@ with torch.no_grad():
         if env_str == "HalfCheetah-v3":
             qpos = current_state_approx[:9].cpu().numpy()
             qvel = current_state_approx[9:].cpu().numpy()
-        else:
+            env.env.set_state(qpos, qvel)
+        elif env_str == "Ant-v3":
             qpos = current_state_approx[:15].cpu().numpy()
             qvel = current_state_approx[15:].cpu().numpy()
-        env.env.set_state(qpos, qvel)
+            env.env.set_state(qpos, qvel)
+        else:
+            env.set_state(current_state_approx.cpu().numpy())
+
+        # render image
         approx_img = env.render()
 
         # calculate loss

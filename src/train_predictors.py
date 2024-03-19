@@ -20,7 +20,7 @@ argparser.add_argument("--steps", type=int, default=1000)
 argparser.add_argument('--data_type', help='The method to use to gather data', default='random')
 
 args = argparser.parse_args()
-assert args.env in ["Ant-v3", "HalfCheetah-v3"]
+assert args.env in ["Ant-v3", "HalfCheetah-v3", "drone"]
 assert args.predictor in ["MLP", "NeuralODE", "FE", "FE_NeuralODE", "FE_Residuals", "FE_NeuralODE_Residuals", "Oracle"]
 use_actions = not args.ignore_actions
 if not use_actions:
@@ -88,7 +88,7 @@ optimizer = torch.optim.Adam(predictor.parameters(), lr=1e-3)
 
 # create a logger
 datetimestr = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-save_dir = f"logs/{'ant' if args.env == 'Ant-v3' else 'cheetah'}/predictor/{datetimestr}/{args.predictor}/{args.data_type}"
+save_dir = f"logs/{'ant' if args.env == 'Ant-v3' else 'cheetah' if args.env == 'HalfCheetah-v3' else 'drone'}/predictor/{datetimestr}/{args.predictor}/{args.data_type}"
 os.makedirs(save_dir, exist_ok=True)
 logger = SummaryWriter(save_dir)
 
@@ -147,6 +147,8 @@ for step in trange(args.steps):
     optimizer.step()
     optimizer.zero_grad()
 
+    if torch.isnan(loss2):
+        print("Nan loss")
 
     # log
     logger.add_scalar("train/loss", total_loss, step)

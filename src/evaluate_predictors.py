@@ -29,8 +29,8 @@ load_mses = args.load_mses
 
 
 # find all paths in logs/cheetah/predictor
-subdirs = next(os.walk(f"logs/{'cheetah' if env == 'HalfCheetah-v3' else 'ant'}/predictor"))[1]
-subdirs = [os.path.join(f"logs/{'cheetah' if env == 'HalfCheetah-v3' else 'ant'}/predictor", x) for x in subdirs]
+subdirs = next(os.walk(f"logs/{'cheetah' if env == 'HalfCheetah-v3' else 'ant' if env == 'Ant-v3' else 'drone'}/predictor"))[1]
+subdirs = [os.path.join(f"logs/{'cheetah' if env == 'HalfCheetah-v3' else 'ant' if env == 'Ant-v3' else 'drone'}/predictor", x) for x in subdirs]
 # every subdir has a policy in it, add this extension
 sub_sub_dirs = []
 for subdir in subdirs:
@@ -45,7 +45,7 @@ paths = sub_sub_sub_dirs
 
 
 # where to save file
-save_dir = os.path.join("logs", "cheetah" if env == "HalfCheetah-v3" else "ant", "predictor")
+save_dir = os.path.join("logs", "cheetah" if env == "HalfCheetah-v3" else "ant" if env == 'Ant-v3' else 'drone', "predictor")
 
 # make sure they exist
 for path in paths:
@@ -180,7 +180,7 @@ if not load_mses:
     trajectory_lengths = test_states.shape[2]
 
     # get test trajcetories
-    init_state_index = 5
+    init_state_index = 20
     initial_states = test_states[:, :, init_state_index, :]
     real_next_states = test_states[:, :, init_state_index + 1:init_state_index + time_horizon+1, :]
     action_sequences = test_actions[:, :, init_state_index:init_state_index + time_horizon, :]
@@ -244,12 +244,27 @@ for alg_type, mse in mses.items():
     time_mse = mse.reshape(-1, mse.shape[-1])
     quartiles = np.percentile(time_mse.cpu().detach().numpy(), [25, 50, 75], axis=0)
     plt.plot(quartiles[1], label=alg_type)
-    plt.fill_between(range(quartiles.shape[1]), quartiles[0], quartiles[2], alpha=0.3)
+    # plt.fill_between(range(quartiles.shape[1]), quartiles[0], quartiles[2], alpha=0.3)
 plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 plt.title("MSE over time horizon")
 plt.xlabel("Time step")
 plt.ylabel("MSE")
-plt.ylim(0, 1.0 if normalize else 15.0)
+y_lim, x_lim = None, None
+if normalize:
+    if env == "HalfCheetah-v3":
+        y_lim = 1.0
+        x_lim = 99
+    elif env == "drone":
+        y_lim = 1.0
+        x_lim = 20
+    else:
+        y_lim = 3.0
+        x_lim = 99
+if not normalize:
+    y_lim = 15.0
+    x_lim = 99
+plt.ylim(0, y_lim)
+plt.xlim(0, x_lim)
 plt.savefig(os.path.join(save_dir , "mse_over_time_horizon.png"), bbox_inches="tight")
 plt.clf()
 

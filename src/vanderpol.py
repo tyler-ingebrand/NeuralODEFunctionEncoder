@@ -26,7 +26,7 @@ torch.manual_seed(0)
 np.random.seed(0)
 
 # hyper params
-mu_range = [1.0, 2.0]
+mu_range = [0.1, 3.0] # [1, 2]
 x_range = [-2.0, 2.0]
 y_range = [-2.0, 2.0]
 t_range = [0, 10]
@@ -45,7 +45,7 @@ approximate_model_mu = 1.0
 train_type = args.train_type
 test_type = args.test_type
 
-train = True # if not train, uses most recent
+train = False # if not train, uses most recent
 video_fit = True
 video_interpolate = False
 image_interpolate = False
@@ -301,10 +301,11 @@ else: # load model
 # plot
 # creates 9 models for 1000 time steps
 if video_fit:
-    vanderpol_models, mus = get_vanderpol_models(9, mu_range)
-    xs = torch.zeros(9, 1000, 2, device=device)
-    xs_estimated = torch.zeros(9, 1000, 2, device=device)
-    xs[:, 0, :] = torch.rand(9, 2, device=device) * (x_range[1] - x_range[0]) + x_range[0]
+    n_rows, n_cols = 2, 4
+    vanderpol_models, mus = get_vanderpol_models(n_rows * n_cols, mu_range)
+    xs = torch.zeros(n_rows * n_cols, 1000, 2, device=device)
+    xs_estimated = torch.zeros(n_rows * n_cols, 1000, 2, device=device)
+    xs[:, 0, :] = torch.rand(n_rows * n_cols, 2, device=device) * (x_range[1] - x_range[0]) + x_range[0]
     xs_estimated[:, 0, :] = xs[:, 0, :]
 
     # get encoding
@@ -312,16 +313,17 @@ if video_fit:
 
 
     # create video
-    width, height = 1000, 1000
+    width, height = n_cols * 600, n_rows * 600
     out = cv2.VideoWriter(f'{logdir}/output.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
-    fig, axs = plt.subplots(3, 3)
+    fig, axs = plt.subplots(n_rows, n_cols)
     fig.set_size_inches(width / 100, height / 100)
     fig.set_dpi(100)
-    fig.tight_layout()
-    for i in range(9):
-        axs[i // 3, i % 3].set_title(f"mu={mus[i]:.2f}")
-        axs[i//3, i%3].set_xlim(-5, 5)
-        axs[i//3, i%3].set_ylim(-5, 5)
+    fig.tight_layout(h_pad=3.0, rect=[0, 0, 1, 0.98])
+    for i in range(n_rows * n_cols):
+        axs[i//n_cols, i%n_cols].set_xlim(-5, 5)
+        axs[i//n_cols, i%n_cols].set_ylim(-5, 5)
+        axs[i//n_cols, i%n_cols].tick_params(axis='both', which='major', labelsize=18)
+        axs[i//n_cols, i%n_cols].set_title(f"$\mu={mus[i]:.2f}$", fontsize=24)
 
     # run ploter
     for time_index in trange(plot_time-1):
@@ -337,11 +339,11 @@ if video_fit:
         xs_estimated[:, time_index+1, :] = x_next.squeeze(1)
 
         # plot the new point
-        for i in range(9):
-            axs[i//3, i%3].plot([xs[i, time_index,  0].cpu().detach().numpy(), xs[i,time_index+1, 0].cpu().detach().numpy()],
+        for i in range(n_rows * n_cols):
+            axs[i//n_cols, i%n_cols].plot([xs[i, time_index,  0].cpu().detach().numpy(), xs[i,time_index+1, 0].cpu().detach().numpy()],
                                 [xs[i, time_index,  1].cpu().detach().numpy(), xs[i,time_index+1, 1].cpu().detach().numpy()],
                                 color="black")
-            axs[i//3, i%3].plot([xs_estimated[i, time_index,  0].cpu().detach().numpy(), xs_estimated[i,time_index+1, 0].cpu().detach().numpy()],
+            axs[i//n_cols, i%n_cols].plot([xs_estimated[i, time_index,  0].cpu().detach().numpy(), xs_estimated[i,time_index+1, 0].cpu().detach().numpy()],
                                 [xs_estimated[i, time_index,  1].cpu().detach().numpy(), xs_estimated[i,time_index+1, 1].cpu().detach().numpy()],
                                 color="red", marker="o", markersize=2)
 

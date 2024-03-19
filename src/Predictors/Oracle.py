@@ -49,10 +49,12 @@ class Oracle(Predictor):
     def predict(self, states:tensor, actions:tensor, hidden_params:list[dict],  average_function_only=False) -> Tuple[tensor, dict]:
         assert states.shape[-1] == self.state_size, "Input size is {}, expected {}".format(states.shape[-1], self.state_size)
         assert actions.shape[-1] == self.action_size, "Input size is {}, expected {}".format(actions.shape[-1], self.action_size)
-        # convert hidden params to tensor from a list of dicts. Also normalize it.
-        hidden_params_tensor = torch.tensor([[hidden_params[i][key] for key in hidden_params[i]] for i in range(len(hidden_params))], device=states.device)
-        hidden_params_tensor = (hidden_params_tensor - self.min_vals_hps) / (self.max_vals_hps - self.min_vals_hps)
-        hidden_params_tensor = hidden_params_tensor.unsqueeze(1).repeat(1, states.shape[1], 1)
+        with torch.no_grad():
+            # convert hidden params to tensor from a list of dicts. Also normalize it.
+            hidden_params_tensor = torch.tensor([[hidden_params[i][key] for key in hidden_params[i]] for i in range(len(hidden_params))], device=states.device)
+            hidden_params_tensor = (hidden_params_tensor - self.min_vals_hps) / (self.max_vals_hps - self.min_vals_hps)
+            hidden_params_tensor = hidden_params_tensor.unsqueeze(1).repeat(1, states.shape[1], 1)
+            hidden_params_tensor[torch.isnan(hidden_params_tensor)] = 0.0
         return self.rk4(states, actions, hidden_params_tensor), {}
 
 

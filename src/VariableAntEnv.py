@@ -246,10 +246,10 @@ class VariableAntEnv(gym.Env):
 
 
 if __name__ == '__main__':
-    foot_max, foot_min = ANKLE_LENGTH/2, ANKLE_LENGTH * 1.5
-    leg_max, leg_min = LEG_LENGTH/2, LEG_LENGTH * 1.5
-    gear_min, gear_max = 100, 200
-    hps = { "gravity": (-9.8,  -5),
+    foot_min, foot_max = ANKLE_LENGTH/2, ANKLE_LENGTH * 1.5
+    leg_min, leg_max = LEG_LENGTH, LEG_LENGTH * 1.5
+    gear_min, gear_max = 60, 60
+    hps = { "gravity": (-9.8,  -9.8),
            "front_left_leg_length": (leg_min, leg_max),
             "front_left_foot_length": (foot_min, foot_max),
             "front_right_leg_length": (leg_min, leg_max),
@@ -259,14 +259,14 @@ if __name__ == '__main__':
             "back_right_leg_length": (leg_min, leg_max),
             "back_right_foot_length": (foot_min, foot_max),
 
-            # "front_left_gear": (gear_min, gear_max),
-            # "front_right_gear": (gear_min, gear_max),
-            # "back_left_gear": (gear_min, gear_max),
-            # "back_right_gear": (gear_min, gear_max),
-            # "front_left_ankle_gear": (gear_min, gear_max),
-            # "front_right_ankle_gear": (gear_min, gear_max),
-            # "back_left_ankle_gear": (gear_min, gear_max),
-            # "back_right_ankle_gear": (gear_min, gear_max),
+            "front_left_gear": (gear_min, gear_max),
+            "front_right_gear": (gear_min, gear_max),
+            "back_left_gear": (gear_min, gear_max),
+            "back_right_gear": (gear_min, gear_max),
+            "front_left_ankle_gear": (gear_min, gear_max),
+            "front_right_ankle_gear": (gear_min, gear_max),
+            "back_left_ankle_gear": (gear_min, gear_max),
+            "back_right_ankle_gear": (gear_min, gear_max),
 
 
     }
@@ -278,4 +278,4 @@ if __name__ == '__main__':
             env.reset()
         env.render()
         time.sleep(0.01)
-        env.step(env.action_space.sample())
+        _ = env.step(env.action_space.sample())

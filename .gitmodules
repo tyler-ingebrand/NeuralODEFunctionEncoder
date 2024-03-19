@@ -1,0 +1,3 @@
+[submodule "safe-control-gym"]
+	path = safe-control-gym
+	url = https://github.com/utiasDSL/safe-control-gym.git

@@ -3,3 +3,4 @@ venv/
 logs/
 .idea/
 __cache__/
+safe-control-gym/
