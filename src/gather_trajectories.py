@@ -211,7 +211,8 @@ def drone_pid_data_gathering(env, n_envs, episode_length, n_episodes):
         # import psutil
 
         # gather data
-        for env_index in trange(n_envs):
+        tbar = trange(n_envs)
+        for env_index in tbar:
             # print(process.memory_info().rss / 1e6 ,"MB")  # in bytes
             obs, info = env.reset()  # resets hidden params to something new
             hps = info["dynamics"]
@@ -219,6 +220,7 @@ def drone_pid_data_gathering(env, n_envs, episode_length, n_episodes):
 
             episode_index = 0
             while episode_index < n_episodes:
+                tbar.set_description(f"Episode {episode_index}")
                 # print(psutil.Process().memory_info().rss / 1e6, " MB")
                 # soft reset env to get a new goal location
                 obs, info = env.reset(reset_hps=False)
@@ -238,7 +240,7 @@ def drone_pid_data_gathering(env, n_envs, episode_length, n_episodes):
                 # run the pid, store results
                 for step_index in range(episode_length):
                     # get action
-                    action = ctrl.select_action(obs, info)
+                    action = ctrl.select_action(info["euler_obs"], info)
                     # noise = np.random.normal(-0.002, 0.002, action.shape)
                     # action += noise
                     # action = np.clip(action, env.action_space.low, env.action_space.high)
@@ -275,6 +277,46 @@ def drone_pid_data_gathering(env, n_envs, episode_length, n_episodes):
             hidden_params.append(info["dynamics"])
 
 
+        assert len(hidden_params) == n_envs
+        return states, actions, next_states, hidden_params
+
+def drone_thorough_data_gathering(env, n_envs, episode_length, n_episodes):
+    with torch.no_grad():
+        states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
+        actions = torch.zeros((n_envs, n_episodes, episode_length, env.action_space.shape[0]))
+        next_states = torch.zeros((n_envs, n_episodes, episode_length, env.observation_space.shape[0]))
+        hidden_params = []
+
+        # x, dx, y, dy, z, dz, phi, theta, psi, dphi, dtheta, dpsi
+        obs_high = np.array([2, 5,   2, 5,   2, 1.05,       1.5, 1.5, 3.14, 30, 30, 30]) # note these use euler angles
+        obs_low = np.array([-2, -5, -2, -5,  0.05, -3.5,    -1.5, -1.5, -3.14, -30, -30, -30])
+
+        # gather data
+        tbar = trange(n_envs)
+        for env_index in tbar:
+            # print(process.memory_info().rss / 1e6 ,"MB")  # in bytes
+            obs, info = env.reset()  # resets hidden params to something new
+
+            for episode_index in range(n_episodes):
+                tbar.set_description(f"Episode {episode_index}")
+                for time_index in range(episode_length):
+                    # get a random state
+                    obs = np.random.rand(obs_high.shape[0]) * (obs_high - obs_low) + obs_low
+                    env.set_state(obs)
+                    obs = env._get_obs()
+
+                    # get random  action
+                    action = env.action_space.sample()
+
+                    # transition
+                    nobs, reward, terminated, truncated, info = env.step(action)
+
+                    # store data
+                    states[env_index, episode_index, time_index] = torch.tensor(obs)
+                    actions[env_index, episode_index, time_index] = torch.tensor(action)
+                    next_states[env_index, episode_index, time_index] = torch.tensor(nobs)
+
+            hidden_params.append(info["dynamics"])
         assert len(hidden_params) == n_envs
         return states, actions, next_states, hidden_params
 
@@ -356,12 +398,17 @@ if __name__ == '__main__':
         test_env2 = VariableCheetahEnv(vars, render_mode=render_mode, exclude_current_positions_from_observation=not use_x_dim)
     else:
         from VariableDroneEnvironment import VariableDroneEnv
-        vars = {
-            'M': (0.022, 0.032),
-            "Ixx": (1.3e-5, 1.5e-5),
-            "Iyy": (1.3e-5, 1.5e-5),
-            "Izz": (2.1e-5, 2.2e-5)
-           }
+        # vars = {
+        #     'M': (0.022, 0.032),
+        #     "Ixx": (1.3e-5, 1.5e-5),
+        #     "Iyy": (1.3e-5, 1.5e-5),
+        #     "Izz": (2.1e-5, 2.2e-5)
+        #    }
+        vars = {'M': (0.02, 0.032),  # .032),
+               "Ixx": (1.4e-5, 1.4e-5),
+               "Iyy": (1.4e-5, 1.4e-5),
+               "Izz": (2.15e-5, 2.15e-5),
+               }
         train_env = VariableDroneEnv(vars, render_mode=render_mode)
         test_env1 = VariableDroneEnv(vars, render_mode=render_mode, no_crash=True)
         test_env2 = VariableDroneEnv(vars, render_mode=render_mode, no_crash=True)
@@ -390,10 +437,9 @@ if __name__ == '__main__':
         visualize(train_env, args)
         exit()
     if args.env == "drone":
+        test_states1, test_actions1, test_next_states1, test_hidden_params1 = drone_pid_data_gathering(test_env1,test_envs,episode_length,n_episodes)
+        test_states2, test_actions2, test_next_states2, test_hidden_params2 = drone_pid_data_gathering(test_env2,test_envs,episode_length,n_episodes)
         train_states, train_actions, train_next_states, train_hidden_params = drone_pid_data_gathering(train_env, n_envs, episode_length, n_episodes)
-        test_states1, test_actions1, test_next_states1, test_hidden_params1 = drone_pid_data_gathering(test_env1, test_envs, episode_length, n_episodes)
-        test_states2, test_actions2, test_next_states2, test_hidden_params2 = drone_pid_data_gathering(test_env2, test_envs, episode_length, n_episodes)
-
     elif args.data_type == "random" or args.data_type == "on-policy":
         train_states, train_actions, train_next_states, train_hidden_params = gather_data_with_hidden_params(train_env, model, n_envs, episode_length, n_episodes, data_type)
         test_states1, test_actions1, test_next_states1, test_hidden_params1 = gather_data_with_hidden_params(test_env1, model, test_envs, episode_length, n_episodes, data_type)

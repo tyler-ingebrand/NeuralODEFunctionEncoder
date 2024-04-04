@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, Optional
 import numpy as np
 import gymnasium as gym
+from gymnasium import spaces
 from safe_control_gym.envs.gym_pybullet_drones.quadrotor import Quadrotor
 from safe_control_gym.envs.gym_pybullet_drones.quadrotor_utils import QuadType
 import pybullet as p
@@ -70,7 +71,10 @@ class VariableDroneEnv(gym.Env):
                               ctrl_freq=25,
                               *self.env_args, **self.env_kwargs)
         self.action_space = self.env.action_space
-        self.observation_space = self.env.observation_space
+        # self.observation_space = self.env.observation_space
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(13,), dtype=np.float32)
+
+
         self.current_dynamics_dict = {}
         self.goal_range = [[-1, 1], [-1, 1], [0.4, 1.6]] # x, y, z
 
@@ -114,16 +118,33 @@ class VariableDroneEnv(gym.Env):
                              *self.env_args, **self.env_kwargs)
 
         # return observation
-        state, info = self.env.reset()
+        euler_obs, info = self.env.reset()
+        info["euler_obs"] = euler_obs
+        obs = self._get_obs()
         info["dynamics"] = self.current_dynamics_dict
-        return state, info
+        return obs, info
 
+    # gets obs with quarternion instead of euler angles
+    def _get_obs(self):
+        full_state = self._get_drone_state_vector(0)
+        pos, quat, rpy, vel, ang_v, _ = np.split(full_state, [3, 7, 10, 13, 16])
+        Rob = np.array(p.getMatrixFromQuaternion(self.env.quat[0])).reshape((3, 3))
+        Rbo = Rob.T
+        ang_v_body_frame = Rbo @ ang_v
+        # {x, x_dot, y, y_dot, z, z_dot, phi, theta, psi, p_body, q_body, r_body}.
+        obs = np.hstack(
+            # [pos[0], vel[0], pos[1], vel[1], pos[2], vel[2], rpy, ang_v]  # Note: world ang_v != body frame pqr
+            [pos[0], vel[0], pos[1], vel[1], pos[2], vel[2], quat, ang_v_body_frame]
+        ).reshape((13,))
+        return obs.copy()
     def step(self, action):
-        next_state, reward, done, info = self.env.step(action)
+        euler_obs, reward, done, info = self.env.step(action)
         info["dynamics"] = self.current_dynamics_dict
+        info["euler_obs"] = euler_obs
         terminated = done
         truncated = False
-        return next_state, reward, terminated, truncated, info
+        n_obs = self._get_obs()
+        return n_obs, reward, terminated, truncated, info
 
     def render(self, mode='human'):
         '''Retrieves a frame from PyBullet rendering.
@@ -134,7 +155,7 @@ class VariableDroneEnv(gym.Env):
         Returns:
             frame (ndarray): A multidimensional array with the RGB frame captured by PyBullet's camera.
         '''
-        res = "low" # "hr"
+        res = "hr" # "hr"
         if res == "low":
             width, height = 720, 480
         elif res == "medium":
@@ -198,16 +219,18 @@ if __name__ == '__main__':
     import cv2
 
     render = True
-    controller = "hover" # "Random"
+    controller = "pid" # "Random"
 
 
+    seed = 2
+    np.random.seed(seed)
 
 
-    hps = {'M': (0.022, 0.032),
-            "Ixx": (1.3e-5, 1.5e-5),
-            "Iyy": (1.3e-5, 1.5e-5),
-            "Izz": (2.1e-5, 2.2e-5)
-           }
+    # hps = {'M': (0.022, 0.032),
+    #         "Ixx": (1.3e-5, 1.5e-5),
+    #         "Iyy": (1.3e-5, 1.5e-5),
+    #         "Izz": (2.1e-5, 2.2e-5)
+    #        }
     # hps = {'M': (0.032, 0.032),
     #         "Ixx": (1.5e-5, 1.5e-5),
     #         "Iyy": (1.5e-5, 1.5e-5),
@@ -218,10 +241,20 @@ if __name__ == '__main__':
     #         "Iyy": (1.4e-5, 1.4e-5),
     #         "Izz": (2.17e-5, 2.17e-5)
     #        }
-    env = VariableDroneEnv(hps, render_mode='human')
+    hps = {'M': (0.02, 0.04 ), # .032),
+            "Ixx": (1.4e-5, 1.4e-5),
+            "Iyy": (1.4e-5, 1.4e-5),
+            "Izz": (2.15e-5, 2.15e-5),
+           }
+    # mass range: 0.015 to 0.055
+    env = VariableDroneEnv(hps, render_mode='human', seed=seed)
     obs, info = env.reset()
+    # hover_val = (env.action_space.high[0] + env.action_space.low[0]) * 0.4050312  # this is pretty close to hovering
+    hover_val = env.action_space.low[0] + (env.action_space.high[0] - env.action_space.low[0]) * 0.5
     # get dt of sim
     print("dt", 1/env.env.CTRL_FREQ)
+    print(hover_val)
+    import math
 
     if render:
         img = env.render()
@@ -230,20 +263,22 @@ if __name__ == '__main__':
 
     truncated, terminated = False, False
     # loop and render to make sure its working
-    for _ in trange(100):
+    for _ in range(20):
         if _ == 0 or terminated or truncated:
             if terminated:
                 print("terminated", _)
             if truncated:
                 print("truncated", _)
-            obs, info = env.reset(reset_hps=False)
-            env.set_state(      [0, 0, 0,
-                                0, 1, 0,
-                                0, 0, 0,
-                                0,0, 0])
+            obs, info = env.reset(reset_hps=True)
+            # env.set_state(      [0, 0, 0,
+            #                     0, 1, 0,
+            #                     0, 0, 0,
+            #                     0, 0, 0])
+            obs = env._get_obs()
+            # print(obs[6:9])
             hps = info["dynamics"]
             hps = {k: (v, v) for k, v in hps.items()}
-            print(hps)
+            # print(hps)
             env_func = lambda : VariableDroneEnv(hps, render_mode='human')
             ctrl = ExploratoryPID(env_func=env_func)
 
@@ -257,14 +292,36 @@ if __name__ == '__main__':
         if controller == "Random":
             action = env.action_space.sample()
         elif controller == "hover":
-            hover_val = (env.action_space.high[0]  + env.action_space.low[0]) * 0.4050312 # this is pretty close to hovering
-            print(hover_val)
             action = np.array([hover_val, hover_val, hover_val, hover_val])
             # print("z=", obs[4])
         else:
             action = ctrl.select_action(obs, info)
+        # action = [0.0705, 0.07, 0.0695, 0.07]
 
         obs, reward, terminated, truncated, info = env.step(action)
+        quat1 = obs[6]
+        quat2 = obs[7]
+        quat3 = obs[8]
+        quat4 = obs[9]
+
+        # normalize quat
+        mag = math.sqrt(quat1 ** 2 + quat2 ** 2 + quat3 ** 2 + quat4 ** 2)
+        quat1 /= mag
+        quat2 /= mag
+        quat3 /= mag
+        quat4 /= mag
+
+        psi = math.atan2(2 * (quat1 * quat2 + quat3 * quat4), 1 - 2 * (quat2 ** 2 + quat3 ** 2))
+        theta = -math.asin(2 * (quat1 * quat3 - quat4 * quat2))
+        phi = math.atan2(2 * (quat1 * quat4 + quat2 * quat3), 1 - 2 * (quat3 ** 2 + quat4 ** 2))
+        if phi > math.pi/2:
+            phi -=  math.pi
+        elif phi < -math.pi/2:
+            phi += math.pi
+        phi = phi * -1
+        # print(f"Calculated: {phi:0.2f}, {theta:0.2f}, {psi:0.2f}")
+        # print(f"    Actual: {info['euler_obs'][6]:0.2f}, {info['euler_obs'][7]:0.2f}, {info['euler_obs'][8]:0.2f}")
+        assert np.allclose([phi, theta, psi], info['euler_obs'][6:9], atol=0.1), "Euler angles do not match"
 
     if render:
         print("Saving")

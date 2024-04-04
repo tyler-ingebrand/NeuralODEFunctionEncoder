@@ -104,14 +104,16 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/.mujoco/mujoco210/bin
 
 
 #python src/train_policy.py --env "drone" --num-timesteps 10 --alg sac # note i dont use these anymore, but they create directories so we run them
-python src/gather_trajectories.py --alg sac --env "drone" --num_envs 200 --transitions_per_env 50000 --data_type "random"
+#python src/gather_trajectories.py --alg sac --env "drone" --num_envs 200 --transitions_per_env 50000 --data_type "random"
 
-python src/train_predictors.py --env "drone" --predictor Oracle --data_type "random" --normalize --seed 0
-python src/train_predictors.py --env "drone" --predictor MLP --data_type "random" --normalize --seed 0
-python src/train_predictors.py --env "drone" --predictor NeuralODE --data_type "random" --normalize --seed 0
-python src/train_predictors.py --env "drone" --predictor FE --data_type "random" --normalize --seed 0
-python src/train_predictors.py --env "drone" --predictor FE_NeuralODE --data_type "random" --normalize --seed 0
-python src/train_predictors.py --env "drone" --predictor FE_Residuals --data_type "random" --normalize --seed 0
-python src/train_predictors.py --env "drone" --predictor FE_NeuralODE_Residuals --data_type "random" --normalize --seed 0
+# python src/train_predictors.py --env "drone" --predictor Oracle --data_type "random" --seed 0 --steps 2000 --normalize
+# python src/train_predictors.py --env "drone" --predictor MLP --data_type "random"  --seed 0 --steps 2000 --normalize
+#python src/train_predictors.py --env "drone" --predictor NeuralODE --data_type "random"  --seed 0 --steps 5000  --normalize
+# python src/train_predictors.py --env "drone" --predictor FE --data_type "random"  --seed 0 --steps 2000 --normalize
+#python src/train_predictors.py --env "drone" --predictor FE_NeuralODE --data_type "random"  --seed 0 --steps 5000 --normalize
+# python src/train_predictors.py --env "drone" --predictor FE_Residuals --data_type "random"  --seed 0 --steps 2000 --normalize
+# python src/train_predictors.py --env "drone" --predictor FE_NeuralODE_Residuals --data_type "random"  --seed 0 --steps 5000 --normalize
 
-python src/evaluate_predictors.py --env "drone" --data_type "random" --normalize
+# python src/evaluate_predictors.py --env "drone" --data_type "random" --normalize
+
+python src/MPC_Drone.py

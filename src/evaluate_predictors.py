@@ -202,6 +202,7 @@ if not load_mses:
     example_next_states = example_next_states.to(device)
     real_next_states = real_next_states.to(device)
 
+
     # evaluate the predictors
     print("")
     mses = {}
@@ -236,6 +237,16 @@ if not load_mses:
 else:
     mses = torch.load(os.path.join(save_dir, "mses.pt"))
 
+
+# labels for every alg
+label_dict = {"MLP": "MLP", 
+              "FE": "FE", 
+              "NeuralODE": "NeuralODE",
+              "FE_NeuralODE": "FE + NeuralODE", 
+              "FE_Residuals": "FE + Recentering", 
+              "FE_NeuralODE_Residuals": "FE + NeuralODE + Recentering", 
+              "Oracle": "Oracle"}
+
 # for every alg type, plot the mse over the time horizon. Compute the quartiles for plotting
 fig = plt.figure()
 for alg_type, mse in mses.items():
@@ -243,7 +254,8 @@ for alg_type, mse in mses.items():
     # time_mse = torch.mean(mse, dim=(1,2))
     time_mse = mse.reshape(-1, mse.shape[-1])
     quartiles = np.percentile(time_mse.cpu().detach().numpy(), [25, 50, 75], axis=0)
-    plt.plot(quartiles[1], label=alg_type)
+    label = label_dict[alg_type]
+    plt.plot(quartiles[1], label=label)
     # plt.fill_between(range(quartiles.shape[1]), quartiles[0], quartiles[2], alpha=0.3)
 plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 plt.title("MSE over time horizon")
@@ -256,7 +268,7 @@ if normalize:
         x_lim = 99
     elif env == "drone":
         y_lim = 1.0
-        x_lim = 20
+        x_lim = 30
     else:
         y_lim = 3.0
         x_lim = 99
@@ -265,7 +277,7 @@ if not normalize:
     x_lim = 99
 plt.ylim(0, y_lim)
 plt.xlim(0, x_lim)
-plt.savefig(os.path.join(save_dir , "mse_over_time_horizon.png"), bbox_inches="tight")
+plt.savefig(os.path.join(save_dir , "mse_over_time_horizon.png"), bbox_inches="tight", dpi=500)
 plt.clf()
 
 # now do the same thing, but filter "hard" examples

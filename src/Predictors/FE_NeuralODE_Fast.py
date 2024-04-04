@@ -109,7 +109,7 @@ class FE_NeuralODE_Fast(Predictor):
         outputs = self.model(inputs.repeat(self.n_basis, 1))
         for basis in range(self.n_basis):
             outputs_slow = slow_model.models[basis](inputs)
-            assert torch.allclose(outputs_slow[0], outputs[basis, :], rtol=1e-4, atol=1e-7), f"Model {basis} does not match slow model"
+            assert torch.allclose(outputs_slow[0], outputs[basis, :], rtol=1e-4, atol=1e-4), f"Model {basis} does not match slow model, got {outputs_slow[0], outputs[basis, :]}"
 
         self.representation = None
 

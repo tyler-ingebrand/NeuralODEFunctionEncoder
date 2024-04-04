@@ -11,6 +11,7 @@ import colorednoise as cn
 from gather_trajectories import load_data
 from src.CEM_MPC import CEM
 from src.Grad_CEM_MPC import GradCEM
+from src.Grad_CEM_MPC2 import GradCEM2
 from src.MPC_Env import MPCEnv
 
 if __name__ == "__main__":
@@ -18,18 +19,18 @@ if __name__ == "__main__":
     # hyper params
     env_str = 'drone'
 
-    # datetime_str = '2024-03-08_21-29-13'
-    # alg_type =  'MLP'
-    # datetime_str = '2024-03-08_23-09-07'
-    # alg_type = 'FE_NeuralODE_Residuals'
-    datetime_str = '2024-03-08_21-41-57'
-    alg_type = "FE_NeuralODE"
+    # datetime_str = '2024-04-01_07-06-35'
+    # alg_type =  'NeuralODE'
+    # datetime_str = '2024-04-01_07-36-10'
+    # alg_type = 'FE_NeuralODE'
+    datetime_str = '2024-04-01_14-45-23'
+    alg_type = "FE_NeuralODE_Residuals" # "FE_NeuralODE"
 
     policy_type = 'random'
-    hidden_param_index = 0
+    hidden_param_index = 2
     use_actions = True
-    test_horizon = 25
-    normalize = True
+    test_horizon = 120
+    normalize = True # True
     seed = 0
     use_true_env = False
     device = torch.device("cuda" if torch.cuda.is_available() and not use_true_env else "cpu")
@@ -39,7 +40,7 @@ if __name__ == "__main__":
     opt_iters = 100
     samples = 100
     top_samples = int(0.4 * samples)
-    mpc_version = "GradCEM"
+    mpc_version = "GradCEM2"
 
     # set seeds
     torch.manual_seed(seed)
@@ -61,6 +62,10 @@ if __name__ == "__main__":
     # create the env
     hidden_params = hidden_params[hidden_param_index]
     hidden_params_dict = {key: (value, value) for key, value in hidden_params.items()}
+
+    print(hidden_params_dict)
+    # err
+
     if env_str == "HalfCheetah-v3":
         from VariableCheetahEnv import VariableCheetahEnv
         env = VariableCheetahEnv(hidden_params_dict, render_mode="rgb_array")
@@ -71,8 +76,8 @@ if __name__ == "__main__":
         true_env = VariableAntEnv(hidden_params_dict, render_mode="rgb_array")
     elif env_str == "drone":
         from VariableDroneEnvironment import VariableDroneEnv
-        env = VariableDroneEnv(hidden_params_dict, render_mode="rgb_array")
-        true_env = VariableDroneEnv(hidden_params_dict, render_mode="rgb_array")
+        env = VariableDroneEnv(hidden_params_dict, render_mode="rgb_array", seed=seed)
+        true_env = VariableDroneEnv(hidden_params_dict, render_mode="rgb_array", seed=seed)
     else:
         raise ValueError(f"Unknown env '{env_str}'")
     _ = env.reset()
@@ -84,6 +89,7 @@ if __name__ == "__main__":
 
     # load model
     alg_dir = f"logs/{'ant' if env_str == 'Ant-v3' else 'cheetah' if env_str == 'HalfCheetah-v3' else 'drone'}/predictor/{datetime_str}/{alg_type}/{policy_type}"
+    # alg_dir = f"logs/{'ant' if env_str == 'Ant-v3' else 'cheetah' if env_str == 'HalfCheetah-v3' else 'drone'}/old3/{datetime_str}/{alg_type}/{policy_type}"
     if alg_type == "MLP":
         from Predictors.MLP import MLP
         predictor = MLP(state_shape, action_shape, use_actions=use_actions)
@@ -102,6 +108,7 @@ if __name__ == "__main__":
         predictor = FE(state_shape, action_shape, use_actions=use_actions)
     elif alg_type == "FE_NeuralODE_Residuals":
         from Predictors.FE_NeuralODE_Residuals import FE_NeuralODE_Residuals
+        from Predictors.FE_NeuralODE_Residuals_Fast import FE_NeuralODE_Residuals_Fast
         predictor = FE_NeuralODE_Residuals(state_shape, action_shape, use_actions=use_actions)
     elif alg_type == "Oracle":
         from Predictors.Oracle import Oracle
@@ -118,9 +125,13 @@ if __name__ == "__main__":
         fast_predictor = FE_NeuralODE_Fast(predictor)
         del predictor
         predictor = fast_predictor
+    elif alg_type == "FE_NeuralODE_Residuals":
+        fast_predictor = FE_NeuralODE_Residuals_Fast(predictor)
+        del predictor
+        predictor = fast_predictor
 
     # get example data points
-    num_examples = 200
+    num_examples = 2000
     perm = torch.randperm(states.shape[1] * states.shape[2])
     example_indicies = perm[:num_examples]
     example_episode_indicies = example_indicies // states.shape[2]
@@ -141,13 +152,13 @@ if __name__ == "__main__":
     predictor = predictor.to(device)
 
     # update the representation
-    if alg_type == "FE_NeuralODE":
+    if alg_type == "FE_NeuralODE" or alg_type == "FE_NeuralODE_Residuals":
         predictor.compute_representations(example_states, example_actions, example_next_states)
 
 
     # create the MPCEnv
     obs, info = env.reset()
-    initial_state =torch.tensor(obs, device=device)
+    initial_state = torch.tensor(obs, device=device)
     if normalize and not use_true_env:
         initial_state = (initial_state - mean) / std
 
@@ -162,6 +173,8 @@ if __name__ == "__main__":
         planner = GradCEM(planning_horizon, opt_iters, samples, top_samples, mpc_env, device, action_means)
     elif mpc_version == "CEM":
         planner = CEM(planning_horizon, opt_iters, samples, top_samples, mpc_env, device, action_means)
+    elif mpc_version == "GradCEM2":
+        planner = GradCEM2(planning_horizon, opt_iters, samples, top_samples, mpc_env, device, action_means)
     else:
         raise ValueError(f"Unknown mpc_version '{mpc_version}'")
 
@@ -178,12 +191,15 @@ if __name__ == "__main__":
         try:
             # set the initial state of the env
             current_state = torch.tensor(obs, device=device)
+            # print(*(f"{t:0.2f}" for t in current_state)) # unnoramlized
             if normalize and not use_true_env:
                 current_state = (current_state - mean) / std
             planner.env.set_state(current_state)
 
-
             action = planner.forward(batch_size=1).squeeze(0).cpu().numpy()
+            assert (action <= action_space[:, 1].numpy()).all(), f"Action out of bounds {action} {action_space[:, 1].numpy()}"
+            assert (action >= action_space[:, 0].numpy()).all(), f"Action out of bounds {action} {action_space[:, 0].numpy()}"
+
             # print(action)
             obs, reward, _, _, info = env.step(action)
             img = env.render()

@@ -40,10 +40,10 @@ class GradCEM():  # jit.ScriptModule):
         improved = True # iCEM is supposedely better
         beta = 1 # for iCEM
 
-        s = self.env.state
-        std, mean = self.env.std, self.env.mean
-        s = s * std + mean
-        print(f"x={s[0]:0.2f}, y={s[2]:0.2f}, z={s[4]:0.2f}, phi={s[6]:0.2f}, theta={s[7]:0.2f}, psi={s[8]:0.2f}")
+        # s = self.env.state
+        # std, mean = self.env.std, self.env.mean
+        # s = s * std + mean
+        # print(f"x={s[0]:0.2f}, y={s[2]:0.2f}, z={s[4]:0.2f}, phi={s[6]:0.2f}, theta={s[7]:0.2f}, psi={s[8]:0.2f}")
         action_min = self.action_space[:, 0].to(self.device)
         action_max = self.action_space[:, 1].to(self.device)
 
@@ -60,7 +60,8 @@ class GradCEM():  # jit.ScriptModule):
             actions = torch.tensor(actions, requires_grad=True)
         else:
             n_iters = self.opt_iters
-            actions = torch.tensor(self.prior_actions, requires_grad=True)
+            actions = self.prior_actions.clone().detach()
+            actions.requires_grad = True
 
 
         # Sample actions (T x (B*K) x A)
@@ -70,16 +71,16 @@ class GradCEM():  # jit.ScriptModule):
         # optimizer = optim.RMSprop([actions], lr=0.1)
         optimizer = optim.Adam([actions], lr=1e-3)
         plan_each_iter = []
+
         for index in range(n_iters):
             self.env.reset_state(B*self.K)
-
             optimizer.zero_grad()
 
             # Returns (B*K)
             if index == n_iters - 1:
-                returns = self.env.rollout(actions, render=self.count >= 6)  # optionally render a plan
+                returns, predicted_traj_states = self.env.rollout(actions, render=False) # False) # self.count >= 10)  # optionally render a plan
             else:
-                returns = self.env.rollout(actions)
+                returns, predicted_traj_states = self.env.rollout(actions)
             tot_returns = returns.sum()
             (-tot_returns).backward()
 
@@ -97,6 +98,10 @@ class GradCEM():  # jit.ScriptModule):
                 # print("after clip", actions.grad.max().cpu().numpy())
 
             optimizer.step()
+
+            # clamp actions without breaking the gradients
+            with torch.no_grad():
+                actions.clamp_(action_min, action_max)
 
             _, topk = returns.reshape(B, self.K).topk(self.top_K, dim=1, largest=True, sorted=False)
             # topk += self.K * torch.arange(0, B, dtype=torch.int64, device=topk.device).unsqueeze(dim=1)
@@ -132,5 +137,6 @@ class GradCEM():  # jit.ScriptModule):
         if return_plan:
             return best_plan
         else:
+            # print(*(f"{t:0.2f}" for t in predicted_traj_states[0, 0, :]))
             return best_plan[0]
 
