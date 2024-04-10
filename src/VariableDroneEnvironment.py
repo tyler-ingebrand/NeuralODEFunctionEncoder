@@ -78,11 +78,14 @@ class VariableDroneEnv(gym.Env):
         self.current_dynamics_dict = {}
         self.goal_range = [[-1, 1], [-1, 1], [0.4, 1.6]] # x, y, z
 
+
+
     def reset(self,
         *,
         seed: Optional[int] = None,
         options: Optional[dict] = None,
         reset_hps: bool = True,
+        add_sphere: bool = False
         ):
         if reset_hps:
             # sample env parameters
@@ -119,6 +122,8 @@ class VariableDroneEnv(gym.Env):
 
         # return observation
         euler_obs, info = self.env.reset()
+        if add_sphere:
+            self.add_sphere(0, 0, 1.0)
         info["euler_obs"] = euler_obs
         obs = self._get_obs()
         info["dynamics"] = self.current_dynamics_dict
@@ -155,13 +160,24 @@ class VariableDroneEnv(gym.Env):
         Returns:
             frame (ndarray): A multidimensional array with the RGB frame captured by PyBullet's camera.
         '''
-        res = "hr" # "hr"
+
+
+        res = "hd"
         if res == "low":
             width, height = 720, 480
         elif res == "medium":
             width, height = 1280, 720
         else:
             width, height = 1920, 1080
+
+        self.CAM_VIEW = p.computeViewMatrixFromYawPitchRoll(
+            distance=1.3,
+            yaw=-30,
+            pitch=-30,
+            roll=0,
+            cameraTargetPosition=[0, 0, 1],
+            upAxisIndex=2,
+            physicsClientId=self.PYB_CLIENT)
 
 
         [w, h, rgb, _, _] = p.getCameraImage(width=width,
@@ -174,6 +190,13 @@ class VariableDroneEnv(gym.Env):
                                              physicsClientId=self.PYB_CLIENT)
         # Image.fromarray(np.reshape(rgb, (h, w, 4)), 'RGBA').show()
         return np.reshape(rgb, (h, w, 4))
+
+    # does not experience dynamics or interact with anything
+    def add_sphere(self, x,y,z):
+        # it may be sphere.urdf or src/sphere.urdf, depending on the working dir
+        file = os.path.join(os.path.dirname(__file__), 'sphere.urdf')
+        sphere_id = p.loadURDF(file, [x,y,z])
+        p.changeDynamics(sphere_id, -1, mass=0.0)
 
     def close(self):
         return self.env.close()
@@ -261,15 +284,16 @@ if __name__ == '__main__':
         width, height = img.shape[1], img.shape[0]
         out = cv2.VideoWriter('../DroneEnvironmentTest.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
 
+
     truncated, terminated = False, False
     # loop and render to make sure its working
-    for _ in range(20):
+    for _ in trange(20):
         if _ == 0 or terminated or truncated:
             if terminated:
                 print("terminated", _)
             if truncated:
                 print("truncated", _)
-            obs, info = env.reset(reset_hps=True)
+            obs, info = env.reset(reset_hps=True, add_sphere=True)
             # env.set_state(      [0, 0, 0,
             #                     0, 1, 0,
             #                     0, 0, 0,

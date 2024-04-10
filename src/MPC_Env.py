@@ -39,7 +39,7 @@ class MPCEnv:
 
     # required by interface
     def reset_state(self, batch_size:int)  -> None:
-        self.state = torch.tensor(self.initial_state).repeat(batch_size, 1)
+        self.state = self.initial_state.clone().detach().repeat(batch_size, 1)
 
     # required by interface
     def rollout(self, actions:torch.tensor, render=False) -> torch.tensor:
@@ -107,18 +107,17 @@ class MPCEnv:
 
 
         # hover action
-        hover_action = 0.07148927728325129  # this is emprically tested to be close to hover for a average weight env
-        hover_actions = torch.tensor([hover_action, hover_action, hover_action, hover_action],
-                                     device=trajectory_states.device)
+        # hover_action = 0.07148927728325129  # this is emprically tested to be close to hover for a average weight env
+        # hover_actions = torch.tensor([hover_action, hover_action, hover_action, hover_action], device=trajectory_states.device)
         # close_to_hover_reward = -torch.norm(actions - hover_actions, dim=2).mean(dim=0)
         # give a small allowance of no penalty, ie within 0.007 of hover
-        distance_from_hover = torch.clamp((actions - hover_actions).abs() - 0.012, min=0)
-        close_to_hover_reward = -torch.norm(distance_from_hover, dim=2).mean(dim=0)
+        # distance_from_hover = torch.clamp((actions - hover_actions).abs() - 0.012, min=0)
+        # close_to_hover_reward = -torch.norm(distance_from_hover, dim=2).mean(dim=0)
 
         # change in action
-        action_change = torch.norm(actions[:, 1:] - actions[:, :-1], dim=2).mean(dim=0)
-        action_change = torch.cat([torch.zeros(1 , device=action_change.device), action_change])
-        action_reward = -action_change
+        # action_change = torch.norm(actions[:, 1:] - actions[:, :-1], dim=2).mean(dim=0)
+        # action_change = torch.cat([torch.zeros(1 , device=action_change.device), action_change])
+        # action_reward = -action_change
 
         with torch.no_grad():
             value_vector = torch.ones(trajectory_states.shape[1], device=trajectory_states.device)
@@ -167,7 +166,7 @@ class MPCEnv:
         quat4 = quat4 / quat_norm
 
 
-        psi = torch.atan2(2 * (quat1 * quat2 + quat3 * quat4), 1 - 2 * (quat2 ** 2 + quat3 ** 2))
+        # psi = torch.atan2(2 * (quat1 * quat2 + quat3 * quat4), 1 - 2 * (quat2 ** 2 + quat3 ** 2))
         theta = -torch.asin(2 * (quat1 * quat3 - quat4 * quat2))
         phi = torch.atan2(2 * (quat1 * quat4 + quat2 * quat3), 1 - 2 * (quat3 ** 2 + quat4 ** 2))
         phi = torch.where(phi > torch.pi / 2, phi - torch.pi, phi)
@@ -188,38 +187,38 @@ class MPCEnv:
         # r = trajectory_states[:, :, 11]
         # rotational_velocity = p ** 2 + q ** 2 + r ** 2
         # reward_rotational_velocity = -rotational_velocity.mean(dim=1)
-        p = trajectory_states[:, :, 10]
-        q = trajectory_states[:, :, 11]
-        r = trajectory_states[:, :, 12]
-        rotational_velocity = p ** 2 + q ** 2 + r ** 2
-        rotational_velocity = rotational_velocity * value_vector
-        reward_rotational_velocity = -rotational_velocity.mean(dim=1)
+        # p = trajectory_states[:, :, 10]
+        # q = trajectory_states[:, :, 11]
+        # r = trajectory_states[:, :, 12]
+        # rotational_velocity = p ** 2 + q ** 2 + r ** 2
+        # rotational_velocity = rotational_velocity * value_vector
+        # reward_rotational_velocity = -rotational_velocity.mean(dim=1)
 
         # reward alive
-        alive = z > 0.1
-        reward_alive = alive.float()
-        reward_alive = reward_alive.mean(dim=1)
+        # alive = z > 0.1
+        # reward_alive = alive.float()
+        # reward_alive = reward_alive.mean(dim=1)
 
         # tune this
-        weight_distance = 3 # 10
-        weight_stability = 5 # 25
+        weight_distance = 3
+        weight_stability = 5
         weight_velocity = 1
-        weight_rotational_velocity = 0
-        weight_alive = 0
-        weight_hover = 100
-        weight_action_change = 0
+        # weight_rotational_velocity = 0
+        # weight_alive = 0
+        # weight_hover = 0 # TODO 100
+        # weight_action_change = 0
 
         scales = [weight_distance * reward_distance,
                   weight_stability * reward_stability,
                   weight_velocity * reward_velocity,
-                  weight_rotational_velocity * reward_rotational_velocity,
-                  weight_alive * reward_alive,
-                  weight_hover * close_to_hover_reward,
-                  weight_action_change * action_reward,
+                  # weight_rotational_velocity * reward_rotational_velocity,
+                  # weight_alive * reward_alive,
+                  # weight_hover * close_to_hover_reward,
+                  # weight_action_change * action_reward,
 
                   ]
-        scales_means = [s.mean().item() for s in scales]
-        print(f"{self.counter}:", *(f'{scales_means[i]:.2f} ' for i in range(len(scales_means))))
+        # scales_means = [s.mean().item() for s in scales]
+        # print(f"{self.counter}:", *(f'{scales_means[i]:.2f} ' for i in range(len(scales_means))))
         traj_return = torch.zeros_like(scales[0])
         for scale in scales:
             traj_return += scale
