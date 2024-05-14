@@ -110,6 +110,8 @@ class VariableDroneEnv(gym.Env):
         inertial_prop = self.current_dynamics_dict['M'], self.current_dynamics_dict['Ixx'], self.current_dynamics_dict['Iyy'], self.current_dynamics_dict['Izz']
         self.env.close() # THIS IS CRUCIAL DONT DELETE THIS. OTHERWISE MEMORY LEAK
         del self.env
+        if seed:
+            self.env_kwargs['seed'] = seed
         self.env = Quadrotor(task_info=self.task_info,
                              task=self.task,
                              inertial_prop=inertial_prop,
@@ -162,7 +164,7 @@ class VariableDroneEnv(gym.Env):
         '''
 
 
-        res = "hd"
+        res = "low"
         if res == "low":
             width, height = 720, 480
         elif res == "medium":
@@ -242,7 +244,7 @@ if __name__ == '__main__':
     import cv2
 
     render = True
-    controller = "pid" # "Random"
+    controller = "hover" # "Random"
 
 
     seed = 2
@@ -259,21 +261,21 @@ if __name__ == '__main__':
     #         "Iyy": (1.5e-5, 1.5e-5),
     #         "Izz": (2.2e-5, 2.2e-5)
     #        }
-    # hps = {'M': (0.027, 0.027),
-    #         "Ixx": (1.4e-5, 1.4e-5),
-    #         "Iyy": (1.4e-5, 1.4e-5),
-    #         "Izz": (2.17e-5, 2.17e-5)
-    #        }
-    hps = {'M': (0.02, 0.04 ), # .032),
+    hps = {'M': (0.027, 0.027),
             "Ixx": (1.4e-5, 1.4e-5),
             "Iyy": (1.4e-5, 1.4e-5),
-            "Izz": (2.15e-5, 2.15e-5),
+            "Izz": (2.17e-5, 2.17e-5)
            }
+    # hps = {'M': (0.02, 0.04 ), # .032),
+    #         "Ixx": (1.4e-5, 1.4e-5),
+    #         "Iyy": (1.4e-5, 1.4e-5),
+    #         "Izz": (2.15e-5, 2.15e-5),
+    #        }
     # mass range: 0.015 to 0.055
     env = VariableDroneEnv(hps, render_mode='human', seed=seed)
     obs, info = env.reset()
     # hover_val = (env.action_space.high[0] + env.action_space.low[0]) * 0.4050312  # this is pretty close to hovering
-    hover_val = env.action_space.low[0] + (env.action_space.high[0] - env.action_space.low[0]) * 0.5
+    hover_val = env.action_space.low[0] + (env.action_space.high[0] - env.action_space.low[0]) * 0.275
     # get dt of sim
     print("dt", 1/env.env.CTRL_FREQ)
     print(hover_val)
@@ -294,10 +296,10 @@ if __name__ == '__main__':
             if truncated:
                 print("truncated", _)
             obs, info = env.reset(reset_hps=True, add_sphere=True)
-            # env.set_state(      [0, 0, 0,
-            #                     0, 1, 0,
-            #                     0, 0, 0,
-            #                     0, 0, 0])
+            env.set_state(      [0, 0, 0,
+                                0, 1, 0,
+                                0, 0, 0,
+                                0, 0, 0])
             obs = env._get_obs()
             # print(obs[6:9])
             hps = info["dynamics"]

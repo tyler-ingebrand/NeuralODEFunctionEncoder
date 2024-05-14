@@ -178,6 +178,12 @@ class MPCEnv:
         reward_stability = -stability.mean(dim=1)
 
 
+        # penalize bang-bang actions
+        dif_actions_1and3 = (actions[:, :, 0] - actions[:, :, 2])**2
+        dif_actions_2and4 = (actions[:, :, 1] - actions[:, :, 3])**2
+        dif_actions = dif_actions_1and3 + dif_actions_2and4
+        dif_actions = -dif_actions.mean(dim=0)
+
 
         # low rotational velocity
         # state labels: ['init_x', 'init_x_dot', 'init_y', 'init_y_dot', 'init_z', 'init_z_dot',
@@ -199,14 +205,23 @@ class MPCEnv:
         # reward_alive = alive.float()
         # reward_alive = reward_alive.mean(dim=1)
 
+        # penalize slew rate
+        # action_change = actions[:, 1:] - actions[:, :-1]
+        # action_change = action_change ** 2
+        # action_change = -action_change.mean(dim=2)
+        # reward_action_change = torch.concat([torch.zeros(action_change.shape[0], 1, device=action_change.device), action_change], dim=1)
+        # reward_action_change = reward_action_change.mean(dim=0)
+
         # tune this
         weight_distance = 3
         weight_stability = 5
         weight_velocity = 1
+        weight_action_change = 2000 # needed to prevent instability at goal locatin
         # weight_rotational_velocity = 0
         # weight_alive = 0
         # weight_hover = 0 # TODO 100
-        # weight_action_change = 0
+        # weight_slew_rate = 10_000
+
 
         scales = [weight_distance * reward_distance,
                   weight_stability * reward_stability,
@@ -215,6 +230,8 @@ class MPCEnv:
                   # weight_alive * reward_alive,
                   # weight_hover * close_to_hover_reward,
                   # weight_action_change * action_reward,
+                  weight_action_change * dif_actions,
+                  # weight_slew_rate * reward_action_change,
 
                   ]
         # scales_means = [s.mean().item() for s in scales]

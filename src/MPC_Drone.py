@@ -8,7 +8,7 @@ import os
 import cv2
 from tqdm import trange, tqdm
 import colorednoise as cn
-
+import math
 
 from gather_trajectories import load_data
 from src.CEM_MPC import CEM
@@ -16,6 +16,36 @@ from src.Grad_CEM_MPC import GradCEM
 from src.Grad_MPC import Grad
 from src.MPC_Env import MPCEnv
 from VariableDroneEnvironment import VariableDroneEnv
+
+
+def convert_quat_state_to_euler(quat_state):
+    x, dx, y, dy, z, dz = quat_state[0], quat_state[1], quat_state[2], quat_state[3], quat_state[4], quat_state[5]
+    quat1 = quat_state[6]
+    quat2 = quat_state[7]
+    quat3 = quat_state[8]
+    quat4 = quat_state[9]
+    p = quat_state[10]
+    q = quat_state[11]
+    r = quat_state[12]
+
+    # convert quats eo euler
+    # normalize quat
+    mag = math.sqrt(quat1 ** 2 + quat2 ** 2 + quat3 ** 2 + quat4 ** 2)
+    quat1 /= mag
+    quat2 /= mag
+    quat3 /= mag
+    quat4 /= mag
+
+    psi = math.atan2(2 * (quat1 * quat2 + quat3 * quat4), 1 - 2 * (quat2 ** 2 + quat3 ** 2))
+    theta = -math.asin(2 * (quat1 * quat3 - quat4 * quat2))
+    phi = math.atan2(2 * (quat1 * quat4 + quat2 * quat3), 1 - 2 * (quat3 ** 2 + quat4 ** 2))
+    if phi > math.pi / 2:
+        phi -= math.pi
+    elif phi < -math.pi / 2:
+        phi += math.pi
+    phi = phi * -1
+    return [x, dx, y, dy, z, dz, phi, theta, psi, p, q, r]
+
 
 if __name__ == "__main__":
 
@@ -32,7 +62,7 @@ if __name__ == "__main__":
     samples = 100 # MPC sample trajs to optimize at once
     num_episodes_per_hidden_param = 5
     render = False
-
+    low_data = False
 
     env_str = 'drone'
     load_dir = "logs/drone/predictor"
@@ -68,6 +98,9 @@ if __name__ == "__main__":
     action_space = torch.stack([quants[0], quants[1]], dim=1)
     del training_actions123
 
+    # create initial state conditions based on past data. This is so the initial states are the same
+    # for all algorithms. Otherwise, the results are noisy.
+    initial_states = states[0, :num_episodes_per_hidden_param, 0, :].clone().detach()
 
     # fetch all the subdirectories
     alg_dirs = [os.path.join(load_dir, x) for x in os.listdir(load_dir) if os.path.isdir(os.path.join(load_dir, x))]
@@ -119,6 +152,7 @@ if __name__ == "__main__":
 
         # efficient models for MPC
         if alg_type == "FE_NeuralODE":
+            print("FAST")
             fast_predictor = FE_NeuralODE_Fast(predictor)
             del predictor
             predictor = fast_predictor
@@ -126,6 +160,14 @@ if __name__ == "__main__":
             fast_predictor = FE_NeuralODE_Residuals_Fast(predictor)
             del predictor
             predictor = fast_predictor
+
+        # verify performance
+        # predictor = predictor.to(device)
+        # torch.manual_seed(-10)
+        # torch.cuda.manual_seed(-10)
+        # with torch.no_grad():
+        #     predictor.verify_performance(states, actions, next_states, mean, std, device=device, normalize=normalize)
+        # exit(-1)
 
         # create a renderer
         if render:
@@ -148,22 +190,19 @@ if __name__ == "__main__":
         tbar = tqdm(total=len(test_hidden_params) * num_episodes_per_hidden_param)
         tbar.set_description(f"{alg_type}")
         for hidden_param_index in range(len(test_hidden_params)):
-            # TODO
-            # if hidden_param_index != 2:
-            #     continue
-
-
+            if render and hidden_param_index not in (12, 39):
+                continue
             hidden_params = test_hidden_params[hidden_param_index]
             hidden_params_dict = {key: (value, value) for key, value in hidden_params.items()}
 
             seed += 1
             env = VariableDroneEnv(hidden_params_dict, render_mode="rgb_array", seed=seed)
 
-            _ = env.reset(add_sphere=True)
+            _ = env.reset(add_sphere=render)
             state_space = env.observation_space
 
             # get example data points
-            num_examples = 2000
+            num_examples = 2000 if not low_data else 200
             perm = torch.randperm(states.shape[1] * states.shape[2])
             example_indicies = perm[:num_examples]
             example_episode_indicies = example_indicies // states.shape[2]
@@ -189,8 +228,19 @@ if __name__ == "__main__":
                 predictor.compute_representations(example_states, example_actions, example_next_states)
 
             for episode in range(num_episodes_per_hidden_param):
+                # fetch init state for this episode
+                init_state = initial_states[episode] # init states are the same for all hidden parameters because we want to compare across hidden parameters
+                init_state = convert_quat_state_to_euler(init_state)
+
                 # create the MPCEnv
-                obs, info = env.reset(add_sphere=True) # for viz
+                seed += 1
+                _, info = env.reset(add_sphere=render, seed=seed) # for viz
+
+                # set initial state
+                env.set_state(init_state)
+                obs = env._get_obs()
+
+                # save initial state
                 initial_state = torch.tensor(obs, device=device)
                 states_to_save[hidden_param_index, episode, 0] = initial_state.cpu()
                 if normalize:
@@ -222,7 +272,7 @@ if __name__ == "__main__":
                     planner.env.set_state(current_state)
 
                     action = planner.forward(batch_size=1).squeeze(0).cpu().numpy()
-                    print(f"\t\t\tAction: {action[0]:0.4f}, {action[1]:0.4f}, {action[2]:0.4f}, {action[3]:0.4f}")
+                    # print(f"\t\t\tAction: {action[0]:0.4f}, {action[1]:0.4f}, {action[2]:0.4f}, {action[3]:0.4f}")
                     # assert (action <= action_space[:, 1].numpy()).all(), f"Action out of bounds {action} {action_space[:, 1].numpy()}"
                     # assert (action >= action_space[:, 0].numpy()).all(), f"Action out of bounds {action} {action_space[:, 0].numpy()}"
                     actions_to_save[hidden_param_index, episode, time] = torch.tensor(action, device="cpu")
@@ -236,6 +286,7 @@ if __name__ == "__main__":
 
                     # check if z is less than 0
                     if obs[4] < 0:
+                        print("Collision")
                         if render:
                             img = cv2.putText(img, "Collision", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2, cv2.LINE_AA)
                             out.write(img)
@@ -244,8 +295,9 @@ if __name__ == "__main__":
                         break
                 tbar.update(1)
             env.close()
+
         if not render:
-            torch.save(states_to_save, f"{alg_dir}/mpc_states.pt")
-            torch.save(actions_to_save, f"{alg_dir}/mpc_actions.pt")
+            torch.save(states_to_save, f"{alg_dir}/mpc_states{'_low_data' if low_data else ''}.pt")
+            torch.save(actions_to_save, f"{alg_dir}/mpc_actions{'_low_data' if low_data else ''}.pt")
         if render:
             out.release()

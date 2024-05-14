@@ -61,6 +61,8 @@ class FE_NeuralODE(Predictor):
             basis_prediction = self.rk4(self.models[i], example_states, example_actions, absolute=False)
             encodings[:, i, :] = torch.einsum("fes,fes->fs", state_dif, basis_prediction) * (1.0/(basis_prediction.shape[-2]))
         encodings = encodings
+        # print(encodings[0])
+        # exit(-1)
 
         # approximate next states
         individual_encodings = torch.zeros(*batch_dims, self.n_basis, self.state_size, device=states.device)
@@ -93,6 +95,65 @@ class FE_NeuralODE(Predictor):
                 state_predictions[j:j+num_functions_at_once, :, i+1, :] = next_state_predictions
 
         return state_predictions[:, :, 1:, :]
+
+
+    def verify_performance(self, all_states_test, all_actions_test, all_next_states_test, mean, std, device, normalize=True):
+        if normalize:
+            all_states_test = (all_states_test - mean) / std
+            all_next_states_test = (all_next_states_test - mean) / std
+
+        # now do the same thing for testing only
+        n_envs_at_once = 10
+        n_example_points = 200
+        grad_accumulation_steps = 5
+        total_test_loss = 0.0
+        for grad_accum_step in range(grad_accumulation_steps):
+            # randomize
+            # get some envs
+            env_indicies = torch.randperm(all_states_test.shape[0])[:n_envs_at_once]
+
+            # get some random steps
+            perm = torch.randperm(all_states_test.shape[1] * all_states_test.shape[2])
+            example_indicies = perm[:n_example_points]
+            test_indicies = perm[n_example_points:][:800]  # only gather the first 800 random points
+            # print("Env indicies", env_indicies)
+            # print("Example indicies", example_indicies)
+
+            # convert to episode and timestep indicies
+            example_episode_indicies = example_indicies // all_states_test.shape[2]
+            example_timestep_indicies = example_indicies % all_states_test.shape[2]
+            test_episode_indicies = test_indicies // all_states_test.shape[2]
+            test_timestep_indicies = test_indicies % all_states_test.shape[2]
+
+            # gather data
+            states = all_states_test[env_indicies, :, :, :][:, test_episode_indicies, test_timestep_indicies, :].to(device)
+            actions = all_actions_test[env_indicies, :, :, :][:, test_episode_indicies, test_timestep_indicies,:].to(device)
+            next_states = all_next_states_test[env_indicies, :, :, :][:, test_episode_indicies,test_timestep_indicies, :].to(device)
+            example_states = all_states_test[env_indicies, :, :, :][:, example_episode_indicies, example_timestep_indicies, :].to(device)
+            example_actions = all_actions_test[env_indicies, :, :, :][:, example_episode_indicies,example_timestep_indicies, :].to(device)
+            example_next_states = all_next_states_test[env_indicies, :, :, :][:, example_episode_indicies,example_timestep_indicies, :].to(device)
+
+            # reshape to ignore the episode dim, since we are only doing 1 step, it doesnt matter
+            states = states.view(states.shape[0], -1, states.shape[-1])
+            actions = actions.view(actions.shape[0], -1, actions.shape[-1])
+            next_states = next_states.view(next_states.shape[0], -1, next_states.shape[-1])
+            example_states = example_states.view(example_states.shape[0], -1, example_states.shape[-1])
+            example_actions = example_actions.view(example_actions.shape[0], -1, example_actions.shape[-1])
+            example_next_states = example_next_states.view(example_next_states.shape[0], -1, example_next_states.shape[-1])
+
+            # test the predictor
+            predicted_next_states, test_info = self.predict(states, actions, example_states, example_actions, example_next_states)
+            test_loss = torch.nn.functional.mse_loss(predicted_next_states, next_states)
+            # print(states.shape, actions.shape, next_states.shape, example_states.shape, example_actions.shape, example_next_states.shape, predicted_next_states.shape)
+            # print(states[0, 0])
+            # print(actions[0, 0])
+            # print(next_states[0, 0])
+            # print(predicted_next_states[0, 0])
+            # exit(-1)
+            total_test_loss += test_loss.item() / grad_accumulation_steps
+            del states, actions, next_states, example_states, example_actions, example_next_states, predicted_next_states, test_loss
+        print(f"FE Neural ODE Test Performance: {total_test_loss:.4f}")
+
 if __name__ == "__main__":
     model = FE_NeuralODE(5, 3, True)
     states, actions, example_states, example_actions, example_next_states = torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5), torch.rand(7, 10, 3), torch.rand(7, 10, 5)

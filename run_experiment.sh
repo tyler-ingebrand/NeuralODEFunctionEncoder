@@ -1,13 +1,11 @@
 #!/bin/bash
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/.mujoco/mujoco210/bin
 
-#python src/vanderpol.py --train_type "uniform" --test_type "uniform" --use_approximate_model True --grad_steps 1000 --plot_time 500
-#python src/vanderpol.py --train_type "uniform" --test_type "trajectory" --use_approximate_model True --grad_steps 1000 --plot_time 500
-#python src/vanderpol.py --train_type "uniform" --test_type "trajectory_ls" --use_approximate_model True --grad_steps 1000 --plot_time 500
-
-#python src/vanderpol.py --train_type "trajectory" --test_type "trajectory" --use_approximate_model True --grad_steps 1000 --plot_time 500
-#python src/vanderpol.py --train_type "trajectory" --test_type "trajectory_ls" --use_approximate_model True --grad_steps 1000 --plot_time 500
-
+python src/vanderpol.py --train_type "trajectory" --test_type "trajectory" --grad_steps 1000 --plot_time 500 &
+# sleep 2s
+# python src/vanderpol.py --train_type "trajectory" --test_type "trajectory" --use_approximate_model --grad_steps 5000 --plot_time 500 &
+#python src/vanderpol.py --train_type "trajectory" --test_type "trajectory" --vanilla_neuralODE --grad_steps 5000 --plot_time 500 &
+# wait
 
 # train policies
 #python src/train_policy.py --env "Ant-v3" --num-timesteps 10 --alg sac # note i dont use these anymore, but they create directories so we run them
@@ -120,7 +118,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/.mujoco/mujoco210/bin
 #
 #
 #
-export PYTHONPATH=$PATHONPATH:`pwd`
-nohup python src/MPC_Drone.py --alg NeuralODE > output1.log 2>&1 &
-nohup python src/MPC_Drone.py --alg FE_NeuralODE > output2.log 2>&1 &
-nohup python src/MPC_Drone.py --alg FE_NeuralODE_Residuals > output3.log 2>&1 &
+#export PYTHONPATH=$PATHONPATH:`pwd`
+#nohup python src/MPC_Drone.py --alg NeuralODE > output1.log 2>&1 &
+#nohup python src/MPC_Drone.py --alg FE_NeuralODE > output2.log 2>&1 &
+#nohup python src/MPC_Drone.py --alg FE_NeuralODE_Residuals > output3.log 2>&1 &

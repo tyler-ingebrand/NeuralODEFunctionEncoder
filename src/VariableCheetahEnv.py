@@ -250,6 +250,8 @@ class VariableCheetahEnv(gym.Env):
 
 
 if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+
     vars = {
             'friction': (0.0, 1.0),
             'torso_length': (1 * 0.5, 1 * 1.5),
@@ -276,10 +278,15 @@ if __name__ == '__main__':
     #     time.sleep(0.01)
     #     env.step(env.action_space.sample())
 
+    imgs = []
+    for i in range(4):
+        env.reset()
+        img = env.render()
+        imgs.append(img)
 
-    env.reset()
-    img = env.render()
-    # save it to png
-    import matplotlib.image
-
-    matplotlib.image.imsave('halfcheetah.png', img)
+    # make a panel of images and save it to images/halfcheetah.png
+    fig, axs = plt.subplots(2, 2)
+    for i, img in enumerate(imgs):
+        axs[i//2, i%2].imshow(img)
+        axs[i//2, i%2].axis('off')
+    plt.savefig('images/halfcheetah.png')

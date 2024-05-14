@@ -29,20 +29,17 @@ class FE_NeuralODE_Residuals_Fast(Predictor):
         warnings.warn(
             "This class is fast but memory inefficient. Do not use this for training. Use FE_NeuralODE for training.")
 
-        # copy average function model
-        self.model = copy.deepcopy(slow_model.model)
-
         # create memory to store it
         layers = []
         for layer in slow_model.models[0]:
             if isinstance(layer, torch.nn.Linear):
-                layers.append(ParallelLinear(layer.in_features, layer.out_features, self.n_basis))
+                layers.append(ParallelLinear(layer.in_features, layer.out_features, self.n_basis + 1))
             elif isinstance(layer, torch.nn.ReLU):
                 layers.append(torch.nn.ReLU())
             else:
                 raise Exception("Unknown layer type")
 
-        # now we need to copy the weights
+        # now we need to copy the weights from basis functions
         with torch.no_grad():
             for i in range(len(layers)):
                 if isinstance(slow_model.models[0][i], torch.nn.Linear):
@@ -53,6 +50,17 @@ class FE_NeuralODE_Residuals_Fast(Predictor):
                     pass
                 else:
                     raise Exception("Unknown layer type")
+        # now copy weights from the average model
+        with torch.no_grad():
+            for i in range(len(layers)):
+                if isinstance(slow_model.model[i], torch.nn.Linear):
+                    layers[i].W[self.n_basis] = torch.nn.Parameter(slow_model.model[i].weight.clone())
+                    layers[i].b[self.n_basis] = torch.nn.Parameter(slow_model.model[i].bias.clone())
+                elif isinstance(slow_model.model[i], torch.nn.ReLU):
+                    pass
+                else:
+                    raise Exception("Unknown layer type")
+
         self.models = torch.nn.Sequential(*layers)
 
         # now we need to check that the layers are exactly the same
@@ -65,46 +73,55 @@ class FE_NeuralODE_Residuals_Fast(Predictor):
                 pass
             else:
                 raise Exception("Unknown layer type")
+            # check average model
+            if isinstance(slow_model.model[i], torch.nn.Linear):
+                assert torch.all(slow_model.model[i].weight == layers[i].W[self.n_basis]), f"Layer {i} does not match slow model"
+                assert torch.all(slow_model.model[i].bias == layers[i].b[self.n_basis]), f"Layer {i} does not match slow model"
+            elif isinstance(slow_model.model[i], torch.nn.ReLU):
+                pass
+            else:
+                raise Exception("Unknown layer type")
 
         # verify output is the same between models
         inputs = torch.rand((1, self.state_size + (self.action_size if self.use_actions else 0)))
-        outputs = self.models(inputs.repeat(self.n_basis, 1))
+        outputs = self.models(inputs.repeat(self.n_basis + 1, 1))
         for basis in range(self.n_basis):
             outputs_slow = slow_model.models[basis](inputs)
             assert torch.allclose(outputs_slow[0], outputs[basis, :], rtol=1e-4, atol=1e-4), f"Model {basis} does not match slow model, got {outputs_slow[0], outputs[basis, :]}"
 
         # verify output is same for average function
-        outputs = self.model(inputs)
         outputs_slow = slow_model.model(inputs)
-        assert torch.allclose(outputs_slow, outputs, rtol=1e-4, atol=1e-4), f"Model does not match slow model, got {outputs_slow, outputs}"
+        assert torch.allclose(outputs_slow, outputs[self.n_basis, :], rtol=1e-4, atol=1e-4), f"Model does not match slow model, got {outputs_slow, outputs}"
 
         self.representation = None
 
-    def predict_xdot(self, states, actions, representation, use_average=True, use_basis=True):
-        assert use_average or use_basis, "At least one of use_average or use_basis must be True"
+    def predict_xdot(self, states, actions):
         inputs = torch.cat([states, actions], dim=-1) if self.use_actions else states
-        if use_average and use_basis:
-            xdots_average = self.model(inputs)[:, 0:1, :]
-            x_dots = self.models(inputs)
-            outs = torch.einsum("dkn,kn->dn", x_dots, representation).unsqueeze(1) + xdots_average
-            return outs
-        elif use_average:
-            xdots_average = self.model(inputs)
-            return xdots_average
-        elif use_basis:
-            x_dots = self.models(inputs)
-            outs = torch.einsum("dkn,kn->dn", x_dots, representation).unsqueeze(1)
-            return outs
+        x_dots = self.models(inputs)
+        return x_dots
     def rk4(self, states, actions, representation, dt=0.05, absolute=True, use_average=True, use_basis=True):
-        k1 = self.predict_xdot(states, actions, representation, use_average, use_basis)
-        k2 = self.predict_xdot(states + k1 * dt / 2, actions, representation, use_average, use_basis)
-        k3 = self.predict_xdot(states + k2 * dt / 2, actions, representation, use_average, use_basis)
-        k4 = self.predict_xdot(states + k3 * dt, actions, representation, use_average, use_basis)
+        k1 = self.predict_xdot(states, actions,)
+        k2 = self.predict_xdot(states + k1 * dt / 2, actions)
+        k3 = self.predict_xdot(states + k2 * dt / 2, actions)
+        k4 = self.predict_xdot(states + k3 * dt, actions)
+        predicted_x_dif_per_basis_and_average = (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
 
-        if absolute:
-            return states[:, 0:1, :] + (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
+        # create the representation to decide which of them to use
+        if use_average and use_basis:
+            representation_true = torch.cat([representation, torch.ones_like(representation[0:1, :], device=states.device)], dim=0)
+        elif use_average:
+            representation_true = torch.cat([torch.zeros_like(representation, device=states.device), torch.ones_like(representation[0:1], device=states.device)], dim=0)
+        elif use_basis:
+            representation_true = torch.cat([representation, torch.zeros_like(representation[0:1, :], device=states.device)], dim=0)
         else:
-            return (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
+            raise Exception("Must use at least one of basis or average")
+
+        # now compute next state
+        predicted_x_dif = torch.einsum("ks, eks -> es", representation_true, predicted_x_dif_per_basis_and_average)
+        if absolute:
+            return states[:, 0:1, :] + predicted_x_dif
+        else:
+            return predicted_x_dif
 
 
 
@@ -114,7 +131,7 @@ class FE_NeuralODE_Residuals_Fast(Predictor):
         assert actions.shape[-1] == self.action_size, f"Input size is {actions.shape[-1]}, expected {self.action_size}"
 
         # approximate next states
-        next_states = self.rk4(states, actions, representation)
+        next_states = self.rk4(states, actions, representation, absolute=False) + states[:, 0, :]
         return next_states, {}
 
     def compute_representations(self, example_states, example_actions, example_next_states):
@@ -122,13 +139,17 @@ class FE_NeuralODE_Residuals_Fast(Predictor):
             # compute encodings
             example_batch_dims = example_states.shape[:-1]
             encodings = torch.zeros(self.n_basis, self.state_size, device=example_states.device) # batch_dims[:-1] is the batch size minus the number of episodes
-            average_function_example_dif = self.rk4(example_states, example_actions, None, absolute=False, use_average=True, use_basis=False)
+            example_states_temp = example_states.unsqueeze(1).repeat(1, self.n_basis+1, 1)
+            example_actions_temp = example_actions.unsqueeze(1).repeat(1, self.n_basis+1, 1)
+            average_function_example_dif = self.rk4(example_states_temp, example_actions_temp,
+                                                    torch.zeros(self.n_basis, self.state_size, device=example_states.device),
+                                                    absolute=False, use_average=True, use_basis=False)
             state_dif = example_next_states - example_states - average_function_example_dif
             for i in range(self.n_basis):
                 one_dim_rep = torch.zeros(self.n_basis, self.state_size, device=example_states.device)
                 one_dim_rep[i, :] = 1.0
-                basis_prediction = self.rk4(example_states.unsqueeze(1).repeat(1, self.n_basis, 1),
-                                            example_actions.unsqueeze(1).repeat(1, self.n_basis, 1),
+                basis_prediction = self.rk4(example_states_temp,
+                                            example_actions_temp,
                                             one_dim_rep,
                                             absolute=False,
                                             use_average=False,
@@ -153,10 +174,78 @@ class FE_NeuralODE_Residuals_Fast(Predictor):
             # predict next state, save it
             current_action = actions[0, :, i, :]
             current_states = state_predictions[0, :, i, :]
-            next_state_predictions, _ = self.predict(current_states.unsqueeze(1).repeat(1, self.n_basis, 1),
-                                                     current_action.unsqueeze(1).repeat(1, self.n_basis, 1),
+            next_state_predictions, _ = self.predict(current_states.unsqueeze(1).repeat(1, self.n_basis+1, 1),
+                                                     current_action.unsqueeze(1).repeat(1, self.n_basis+1, 1),
                                                      representation)
             next_state_predictions = next_state_predictions.squeeze(1)
             state_predictions[0, :, i + 1, :] = next_state_predictions
 
         return state_predictions[:, :, 1:, :]
+
+    def verify_performance(self, all_states_test, all_actions_test, all_next_states_test, mean, std, device,
+                           normalize=True):
+        if normalize:
+            all_states_test = (all_states_test - mean) / std
+            all_next_states_test = (all_next_states_test - mean) / std
+
+        # now do the same thing for testing only
+        n_envs_at_once = 10
+        n_example_points = 200
+        grad_accumulation_steps = 5
+        total_test_loss = 0.0
+        for grad_accum_step in range(grad_accumulation_steps):
+            # randomize
+            # get some envs
+            env_indicies = torch.randperm(all_states_test.shape[0])[:n_envs_at_once]
+
+            for env_index in env_indicies:
+                # get some random steps
+                perm = torch.randperm(all_states_test.shape[1] * all_states_test.shape[2])
+                example_indicies = perm[:n_example_points]
+                test_indicies = perm[n_example_points:][:800]  # only gather the first 800 random points
+
+                # convert to episode and timestep indicies
+                example_episode_indicies = example_indicies // all_states_test.shape[2]
+                example_timestep_indicies = example_indicies % all_states_test.shape[2]
+                test_episode_indicies = test_indicies // all_states_test.shape[2]
+                test_timestep_indicies = test_indicies % all_states_test.shape[2]
+
+                # gather data
+                states = all_states_test[env_index:env_index + 1, :, :, :][:, test_episode_indicies,
+                         test_timestep_indicies, :].to(device)
+                actions = all_actions_test[env_index:env_index + 1, :, :, :][:, test_episode_indicies,
+                          test_timestep_indicies, :].to(device)
+                next_states = all_next_states_test[env_index:env_index + 1, :, :, :][:, test_episode_indicies,
+                              test_timestep_indicies, :].to(device)
+                example_states = all_states_test[env_index:env_index + 1, :, :, :][:, example_episode_indicies,
+                                 example_timestep_indicies, :].to(device)
+                example_actions = all_actions_test[env_index:env_index + 1, :, :, :][:, example_episode_indicies,
+                                  example_timestep_indicies, :].to(device)
+                example_next_states = all_next_states_test[env_index:env_index + 1, :, :, :][:,
+                                      example_episode_indicies, example_timestep_indicies, :].to(device)
+
+                # reshape to ignore the episode dim, since we are only doing 1 step, it doesnt matter
+                states = states.view(states.shape[0], -1, states.shape[-1])
+                actions = actions.view(actions.shape[0], -1, actions.shape[-1])
+                next_states = next_states.view(next_states.shape[0], -1, next_states.shape[-1])
+                example_states = example_states.view(example_states.shape[0], -1, example_states.shape[-1])
+                example_actions = example_actions.view(example_actions.shape[0], -1, example_actions.shape[-1])
+                example_next_states = example_next_states.view(example_next_states.shape[0], -1,
+                                                               example_next_states.shape[-1])
+
+                # compute a representation
+                self.compute_representations(example_states.squeeze(0), example_actions.squeeze(0),
+                                             example_next_states.squeeze(0))
+                # print("FAST: ", self.representation)
+                # exit(-1)
+
+                # test the predictor
+                states = states.squeeze(0).unsqueeze(1).repeat(1, self.n_basis+1, 1)
+                actions = actions.squeeze(0).unsqueeze(1).repeat(1, self.n_basis+1, 1)
+                predicted_next_states, test_info = self.predict(states, actions, self.representation)
+                # print(predicted_next_states)
+                # exit(-1)
+                test_loss = torch.nn.functional.mse_loss(predicted_next_states.squeeze(1), next_states.squeeze(0))
+                total_test_loss += test_loss.item() / (grad_accumulation_steps * n_envs_at_once)
+                del states, actions, next_states, example_states, example_actions, example_next_states, predicted_next_states, test_loss
+        print(f"FE Neural ODE Residuals  FAST Test Performance: {total_test_loss:.4f}")

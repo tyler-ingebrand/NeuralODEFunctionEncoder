@@ -7,3 +7,5 @@ safe-control-gym/
 output*.log
 nohup.out
 *.mp4
+images/
+*.pdf

@@ -74,16 +74,53 @@ def get_returns(states, actions):
     phi = torch.where(phi < -torch.pi / 2, phi + torch.pi, phi)
     phi = phi * -1
 
+    if torch.isnan(phi).any():
+        print("phi has nan")
+        nan_indices = torch.isnan(phi)
+        # get the states and actions that caused the nan
+        print(states[nan_indices])
+        raise Exception("Nan in phi")
+    elif torch.isnan(theta).any():
+        print("theta has nan")
+        nan_indices = torch.isnan(theta)
+        # get the states and actions that caused the nan
+        print(states[nan_indices])
+        raise Exception("Nan in theta")
+    
+    # check actions should cancel out
+    a1 = actions[:, :, :, 0]
+    a2 = actions[:, :, :, 1]
+    a3 = actions[:, :, :, 2]
+    a4 = actions[:, :, :, 3]
+    a_mid1 = (a1 + a3) / 2
+    a_mid2 = (a2 + a4) / 2
+    assert (a1 - a_mid1 + a3 - a_mid1).all() < 1e-5, "Actions do not cancel out"
+    assert (a2 - a_mid2 + a4 - a_mid2).all() < 1e-5, "Actions do not cancel out"
+
     stability = phi ** 2 + theta ** 2  # + psi ** 2
     stability = stability * value_vector
     reward_stability = -stability
 
+    # penalizes bang bang actions
+    dif_actions_1and3 = (a1 - a3)**2
+    dif_actions_2and4 = (a2 - a4)**2
+    dif_actions = dif_actions_1and3 + dif_actions_2and4
+    dif_actions_reward = -dif_actions
+
+    # penalize slew rate
+    # action_change = actions[:, :, 1:] - actions[:, :, :-1]
+    # action_change = action_change ** 2
+    # action_change = -action_change.mean(dim=3)
+    # reward_action_change = torch.concat([torch.zeros(action_change.shape[0], action_change.shape[1], 1, device=action_change.device), action_change], dim=2)
 
     # tune this
     weight_distance = 3
     weight_stability = 5
     weight_velocity = 1
     weight_hover = 0 # 100
+    weight_action_change = 2000 # needed to prevent instability at goal locatin
+    weight_slew_rate = 1000
+
 
     if torch.isnan(reward_stability).any():
         print("reward_distance has nan")
@@ -96,11 +133,14 @@ def get_returns(states, actions):
     assert not torch.isnan(reward_stability).any(), "reward_stability has nan"
     assert not torch.isnan(reward_velocity).any(), "reward_velocity has nan"
     assert not torch.isnan(close_to_hover_reward).any(), "close_to_hover_reward has nan"
-
     scales = [weight_distance * reward_distance,
                 weight_stability * reward_stability,
                 weight_velocity * reward_velocity,
                 weight_hover * close_to_hover_reward,
+                weight_action_change * dif_actions_reward,
+                # weight_slew_rate * reward_action_change,
+
+
                 ]
     traj_return = torch.zeros_like(scales[0])
     for scale in scales:
@@ -112,6 +152,7 @@ def get_returns(states, actions):
 env_str = 'drone'
 load_dir = "logs/drone/predictor"
 policy_type = 'random'
+low_data = False
 
 
 _, _, _, _, _, _, _, test_hidden_params = load_data(env_str, policy_type, normalize=False, get_groundtruth_hidden_params=True)
@@ -130,8 +171,9 @@ for alg_dir in alg_dirs:
 
     # try to load the results
     try:
-        states = torch.load(os.path.join(alg_dir, 'mpc_states.pt'))
-        actions = torch.load(os.path.join(alg_dir, 'mpc_actions.pt'))
+        extension = '_low_data' if alg_type != 'NeuralODE' and low_data else ''
+        states = torch.load(os.path.join(alg_dir, f'mpc_states{extension}.pt'))
+        actions = torch.load(os.path.join(alg_dir, f'mpc_actions{extension}.pt'))
     except:
         print(f"Could not load results for {alg_dir}")
         continue
@@ -151,39 +193,53 @@ for alg_type, returns in results.items():
     # sum over all timesteps
     returns = returns [:, :, :100]
     returns = returns.sum(dim=2)
+    print("Alg type", alg_type, "Mean return", returns.mean().item(), "Min return", returns.min().item(), "Max return", returns.max().item())
 
     # compute quantiles to account for crashes
     quarts = torch.quantile(returns, torch.tensor([0.0, 0.5, 1.0]), dim=1).transpose(0, 1)
+    means = returns.mean(dim=1)
+    stds = returns.std(dim=1)
     quarts_with_hps = [(x, test_hidden_params[i]) for i, x in enumerate(quarts)]
+    means_with_hps = [(x, test_hidden_params[i]) for i, x in enumerate(means)]
+    stds_with_hps = [(x, test_hidden_params[i]) for i, x in enumerate(stds)]
 
     # sort based on hps for graph
     quarts_with_hps.sort(key=lambda x: x[1]['M'])
+    means_with_hps.sort(key=lambda x: x[1]['M'])
+    stds_with_hps.sort(key=lambda x: x[1]['M'])
+
 
     # plot min, max, median
-    xs = [x[1]['M'] for x in quarts_with_hps]
-    mins = [x[0][0] for x in quarts_with_hps]
-    medians = [x[0][1] for x in quarts_with_hps]
-    maxs = [x[0][2] for x in quarts_with_hps]
+    xs = [x[1]['M'] for x in quarts_with_hps]# [::4]
+    mins = [x[0][0] for x in quarts_with_hps]# [::4]
+    medians = [x[0][1] for x in quarts_with_hps]# [::4]
+    maxs = [x[0][2] for x in quarts_with_hps]# [::4]
+    means = [x[0] for x in means_with_hps]# [::4]
+    stds = [x[0] for x in stds_with_hps]# [::4]
     
     # plot
     ax.plot(xs, medians, label=alg_type)
     ax.fill_between(xs, mins, maxs, alpha=0.2)
 
+    # ax.plot(xs, means, label=alg_type)
+    # ax.fill_between(xs, [m-s for m,s in zip(means, stds)], [m+s for m,s in zip(means, stds)], alpha=0.2)
 
-ax.legend()
+ax.set_ylim(-100, 0)
+ax.legend(loc="lower left")
 ax.set_xlabel('M')
 ax.set_ylabel('Average Return')
 plt.savefig(f'{load_dir}/mpc_results.png')
 
 
+# err
 # render one of the trajectories
-print("Rendering episode")
 # dir = "logs/drone/predictor/2024-04-01_14-45-23"
 # alg_type = "FE_NeuralODE_Residuals"
-# dir = "logs/drone/predictor/2024-04-01_07-36-10"
-# alg_type = "FE_NeuralODE"
-dir = "logs/drone/predictor/2024-04-01_07-06-35"
-alg_type = "NeuralODE"
+dir = "logs/drone/predictor/2024-04-01_07-36-10"
+alg_type = "FE_NeuralODE"
+# dir = "logs/drone/predictor/2024-04-01_07-06-35"
+# alg_type = "NeuralODE"
+print("Rendering episode ", alg_type)
 
 # load states
 alg_dir = os.path.join(dir, alg_type, "random")
@@ -200,38 +256,55 @@ unraveled = torch.unravel_index(worst_index, returns.shape)
 hp_index = unraveled[0].item()
 traj_index = unraveled[1].item()
 print(f"Worst return: {returns[hp_index, traj_index].item()} with Mass={test_hidden_params[hp_index]['M']}")
-hp_index = 13
-traj_index = 0
-
+hp_index = 20
+print("HP index", hp_index, "Traj index", traj_index)
 
 # create render env
 env = VariableDroneEnv({}, render_mode="human", seed=0)
 env.reset(add_sphere=True)
 img = env.render()
-width, height = img.shape[1], img.shape[0]
+width, height = img.shape[1] * 2, img.shape[0] * 2
 
 # create renderer
 out = cv2.VideoWriter('failed_episode.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
-
+traj_index = None
 for t in trange(states.shape[2]):
-    # get state
-    s = states[hp_index, traj_index, t, :]
-    x, dx, y, dy, z, dz = s[0], s[1], s[2], s[3], s[4], s[5]
-    q1, q2, q3, q4 = s[6], s[7], s[8], s[9]
-    dphi, dtheta, dpsi = s[10], s[11], s[12]
+    imgs = []
+    for traj_index in range(1, 5):
+        # get state
+        s = states[hp_index, traj_index, t, :]
+        x, dx, y, dy, z, dz = s[0], s[1], s[2], s[3], s[4], s[5]
+        q1, q2, q3, q4 = s[6], s[7], s[8], s[9]
+        dphi, dtheta, dpsi = s[10], s[11], s[12]
 
-    # get euler
-    q_norm = torch.sqrt(q1 ** 2 + q2 ** 2 + q3 ** 2 + q4 ** 2)
-    q1 = q1 / q_norm
-    q2 = q2 / q_norm
-    q3 = q3 / q_norm
-    q4 = q4 / q_norm
-    phi = torch.atan2(2 * (q1 * q4 + q2 * q3), 1 - 2 * (q3 ** 2 + q4 ** 2))
-    theta = -torch.asin(2 * (q1 * q3 - q4 * q2))
-    psi = torch.atan2(2 * (q1 * q2 + q3 * q4), 1 - 2 * (q2 ** 2 + q3 ** 2))
+        # get euler
+        q_norm = torch.sqrt(q1 ** 2 + q2 ** 2 + q3 ** 2 + q4 ** 2)
+        q1 = q1 / q_norm
+        q2 = q2 / q_norm
+        q3 = q3 / q_norm
+        q4 = q4 / q_norm
+        phi = torch.atan2(2 * (q1 * q4 + q2 * q3), 1 - 2 * (q3 ** 2 + q4 ** 2))
+        theta = -torch.asin(2 * (q1 * q3 - q4 * q2))
+        psi = torch.atan2(2 * (q1 * q2 + q3 * q4), 1 - 2 * (q2 ** 2 + q3 ** 2))
 
-    # set state
-    env.set_state([ a.item() for a in [x, dx, y, dy, z, dz, phi, theta, psi, dphi, dtheta, dpsi]])
-    out.write(cv2.cvtColor(env.render(), cv2.COLOR_RGB2BGR))
+        # fix phi
+        phi = torch.where(phi > torch.pi / 2, phi - torch.pi, phi)
+        phi = torch.where(phi < -torch.pi / 2, phi + torch.pi, phi)
+        phi = phi * -1
+
+        # set state
+        env.set_state([ a.item() for a in [x, dx, y, dy, z, dz, phi, theta, psi, dphi, dtheta, dpsi]])
+        img = cv2.cvtColor(env.render(), cv2.COLOR_RGB2BGR)
+        # write actions to image
+        if t < actions.shape[2]:
+            action = actions[hp_index, traj_index, t, :]
+            txt = f"{action[0].item():0.2f}, {action[1].item():0.2f}, {action[2].item():0.2f}, {action[3].item():0.2f}"
+            img = cv2.putText(img, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2, cv2.LINE_AA)
+        imgs.append(img)
+    # make 2x2 pane
+    img1 = cv2.hconcat(imgs[:2])
+    img2 = cv2.hconcat(imgs[2:])
+    img = cv2.vconcat([img1, img2])
+    out.write(img)
 
 out.release()
