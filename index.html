@@ -27,7 +27,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
 
-  <title>Academic Project Page</title>
+  <title>Zero-Shot Transfer of Neural ODEs</title>
   <link rel="icon" type="image/x-icon" href="static/images/favicon.ico">
   <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
   rel="stylesheet">
@@ -204,40 +204,68 @@
     </div>
   </div>
 </section>
-<!-- End youtube video -->
+<!-- End MuJoCO video -->
 
-
-<!-- Video carousel -->
+<!-- Drone image -->
 <section class="hero is-small">
   <div class="hero-body">
     <div class="container">
-      <h2 class="title is-3">Another Carousel</h2>
-      <div id="results-carousel" class="carousel results-carousel">
-        <div class="item item-video1">
-          <video poster="" id="video1" autoplay controls muted loop height="100%">
-            <!-- Your video file here -->
-            <source src="static/videos/carousel1.mp4"
-            type="video/mp4">
-          </video>
-        </div>
-        <div class="item item-video2">
-          <video poster="" id="video2" autoplay controls muted loop height="100%">
-            <!-- Your video file here -->
-            <source src="static/videos/carousel2.mp4"
-            type="video/mp4">
-          </video>
-        </div>
-        <div class="item item-video3">
-          <video poster="" id="video3" autoplay controls muted loop height="100%">\
-            <!-- Your video file here -->
-            <source src="static/videos/carousel3.mp4"
-            type="video/mp4">
-          </video>
+      <!-- Paper video. -->
+      <h2 class="title is-3">Online, Adaptive MPC</h2>
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <img src="static/images/drone_quant.png" alt="Drone Image" width="100%">
+          <h2 class="subtitle has-text-centered">
+            We apply this algorithm to the MPC control of a quadrotor. The quadrotor's mass is varied every episode, and the goal is to reach prespecified coordinates.
+            Our results demonstrate that our approach makes more accurate long horizon predictions in the presence
+            of hidden parameters than neural ODEs alone. When measuring the slew rate of the controller, i.e. its efficiency, we observe that this improved prediction
+            accuracy leads to more efficient control of the quadrotor.
+          </h2>
+          <img src="static/images/drone_qual.png" alt="An example trajectory" width="100%">
+          <h2 class="subtitle has-text-centered">
+            Qualitatively, this difference is visible in the trajectories of the respective controllers. Here we are plotting one trajectory from each controller
+            for the same conditions. We observe that the neural ODE controller alone makes repeated corrections to its trajectory. In contrast, our approach more smoothly
+            approaches the target coordinates.
+          </h2>
         </div>
       </div>
     </div>
   </div>
 </section>
+<!-- End Drone video -->
+
+
+<!-- Video carousel -->
+<!--<section class="hero is-small">-->
+<!--  <div class="hero-body">-->
+<!--    <div class="container">-->
+<!--      <h2 class="title is-3">Another Carousel</h2>-->
+<!--      <div id="results-carousel" class="carousel results-carousel">-->
+<!--        <div class="item item-video1">-->
+<!--          <video poster="" id="video1" autoplay controls muted loop height="100%">-->
+<!--            &lt;!&ndash; Your video file here &ndash;&gt;-->
+<!--            <source src="static/videos/carousel1.mp4"-->
+<!--            type="video/mp4">-->
+<!--          </video>-->
+<!--        </div>-->
+<!--        <div class="item item-video2">-->
+<!--          <video poster="" id="video2" autoplay controls muted loop height="100%">-->
+<!--            &lt;!&ndash; Your video file here &ndash;&gt;-->
+<!--            <source src="static/videos/carousel2.mp4"-->
+<!--            type="video/mp4">-->
+<!--          </video>-->
+<!--        </div>-->
+<!--        <div class="item item-video3">-->
+<!--          <video poster="" id="video3" autoplay controls muted loop height="100%">\-->
+<!--            &lt;!&ndash; Your video file here &ndash;&gt;-->
+<!--            <source src="static/videos/carousel3.mp4"-->
+<!--            type="video/mp4">-->
+<!--          </video>-->
+<!--        </div>-->
+<!--      </div>-->
+<!--    </div>-->
+<!--  </div>-->
+<!--</section>-->
 <!-- End video carousel -->
 
 
@@ -245,26 +273,32 @@
 
 
 
-<!-- Paper poster -->
-<section class="hero is-small is-light">
-  <div class="hero-body">
-    <div class="container">
-      <h2 class="title">Poster</h2>
+<!--&lt;!&ndash; Paper poster &ndash;&gt;-->
+<!--<section class="hero is-small is-light">-->
+<!--  <div class="hero-body">-->
+<!--    <div class="container">-->
+<!--      <h2 class="title">Poster</h2>-->
 
-      <iframe  src="static/pdfs/sample.pdf" width="100%" height="550">
-          </iframe>
-        
-      </div>
-    </div>
-  </section>
-<!--End paper poster -->
+<!--      <iframe  src="static/pdfs/sample.pdf" width="100%" height="550">-->
+<!--          </iframe>-->
+<!--        -->
+<!--      </div>-->
+<!--    </div>-->
+<!--  </section>-->
+<!--&lt;!&ndash;End paper poster &ndash;&gt;-->
 
 
 <!--BibTex citation -->
   <section class="section" id="BibTeX">
     <div class="container is-max-desktop content">
       <h2 class="title">BibTeX</h2>
-      <pre><code>BibTex Code Here</code></pre>
+      <pre><code>@misc{functionEncoderNeuralODEs2024,
+      title={Zero-Shot Transfer of Neural ODEs},
+      author={Tyler Ingebrand and Adam J. Thorpe and Ufuk Topcu},
+      year={2024},
+      journal={NeurIPS}.
+      }
+      </code></pre>
     </div>
 </section>
 <!--End BibTex citation -->
