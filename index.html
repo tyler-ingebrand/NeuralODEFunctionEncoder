@@ -160,61 +160,45 @@
 <!-- End paper abstract -->
 
 
-<!-- Image carousel -->
+<!-- Cover image -->
 <section class="hero is-small">
   <div class="hero-body">
     <div class="container">
-      <div id="results-carousel" class="carousel results-carousel">
-       <div class="item">
         <!-- Your image here -->
-        <img src="static/images/carousel1.jpg" alt="MY ALT TEXT"/>
+        <img src="static/images/cover.png" alt="MY ALT TEXT"/>
         <h2 class="subtitle has-text-centered">
-          First image description.
+          Our algorithm consists of an offline learning phase and an online execution phase.
+          During the offline phase, we learn a set of basis functions that span the space of dynamics.
+          This space of dynamics can arise due to unknown system parameters, such as a quadrotor with an unknown mass.
+          The basis functions are learned via the function encoder algorithm, and each basis function is a neural ODE.
+          During the online phase, we use the learned basis functions and a small online dataset to identify the dynamics of the system.
+          This online adaptation requires zero gradient updates, and can be computed in real-time.
+          Then, this model can be used for downstream tasks, such as MPC.
         </h2>
-      </div>
-      <div class="item">
-        <!-- Your image here -->
-        <img src="static/images/carousel2.jpg" alt="MY ALT TEXT"/>
-        <h2 class="subtitle has-text-centered">
-          Second image description.
-        </h2>
-      </div>
-      <div class="item">
-        <!-- Your image here -->
-        <img src="static/images/carousel3.jpg" alt="MY ALT TEXT"/>
-        <h2 class="subtitle has-text-centered">
-         Third image description.
-       </h2>
-     </div>
-     <div class="item">
-      <!-- Your image here -->
-      <img src="static/images/carousel4.jpg" alt="MY ALT TEXT"/>
-      <h2 class="subtitle has-text-centered">
-        Fourth image description.
-      </h2>
     </div>
+
   </div>
-</div>
-</div>
 </section>
 <!-- End image carousel -->
 
 
 
 
-<!-- Youtube video -->
+<!-- MuJoCo image -->
 <section class="hero is-small is-light">
   <div class="hero-body">
     <div class="container">
       <!-- Paper video. -->
-      <h2 class="title is-3">Video Presentation</h2>
+      <h2 class="title is-3">Accurate Long Horizon Predictions</h2>
       <div class="columns is-centered has-text-centered">
         <div class="column is-four-fifths">
-          
-          <div class="publication-video">
-            <!-- Youtube embed code here -->
-            <iframe src="https://www.youtube.com/embed/JkaxUblCGz0" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-          </div>
+
+          <img src="static/images/mujoco_no_background.png" alt="MuJoCo Image" width="100%">
+          <h2 class="subtitle has-text-centered">
+            We demonstrate that our learned models can accurately predict the dynamics on the MuJoCo HalfCheetah and Ant environments.
+            We vary numerous environment parameters, such as lengths of the limbs and the control authority.
+            Then, given a small online dataset, we attempt to predict the dynamics k steps into the future.
+            Our results indicate that we achieve both the accurate long horizon predictions of neural ODEs and the online adaptability of function encoders.
         </div>
       </div>
     </div>
