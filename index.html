@@ -170,12 +170,14 @@
 
 
 <!-- Cover image -->
-<section class="hero is-small">
-  <div class="hero-body">
-    <div class="container">
+<section class="section hero is-small">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths"><!-- Your image here -->
+        <div class="content has-text-justified">
         <!-- Your image here -->
-        <img src="static/images/cover.png" alt="MY ALT TEXT"/>
-        <h2 class="subtitle has-text-centered">
+        <img src="static/images/cover.png" alt="Function Encoder training diagram."/>
+        <h2 class="subtitle">
           Our algorithm consists of an offline learning phase and an online execution phase.
           During the offline phase, we learn a set of basis functions that span the space of dynamics.
           This space of dynamics can arise due to unknown system parameters, such as a quadrotor with an unknown mass.
@@ -184,8 +186,9 @@
           This online adaptation requires zero gradient updates, and can be computed in real-time.
           Then, this model can be used for downstream tasks, such as MPC.
         </h2>
+        </div>
+      </div>
     </div>
-
   </div>
 </section>
 <!-- End image carousel -->
