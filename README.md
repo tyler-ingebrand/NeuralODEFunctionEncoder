@@ -1,5 +1,7 @@
 # Zero-Shot Transfer of Neural ODEs
 
+See the [project page](https://tyler-ingebrand.github.io/NeuralODEFunctionEncoder/).
+
 This repository contains the code for the paper "Zero-Shot Transfer of Neural ODEs".
 All experiments are run using "./run_experiment.sh" script. 
 We expect it to take around 1-2 weeks for all experiments, as there are numerous
@@ -8,7 +10,7 @@ baselines and numerous seeds, each of which can take a few hours.
 The main required packages are torch, numpy, gymnasium[mujoco], and safe-control-gym. 
 
 
-The following are the dependencies for the environment in the experiments:
+The following are the dependencies for the environment in the experiments, although this repo should not be too sensitive to exact versions:
 ```
 Package                    Version
 -------------------------- -----------
